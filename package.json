@@ -1,0 +1,15 @@
+{
+  "name": "opencode-funes",
+  "version": "0.1.0",
+  "description": "Index completed OpenCode sessions into Funes",
+  "type": "module",
+  "exports": "./src/index.ts",
+  "bin": { "opencode-funes": "./src/cli.ts" },
+  "files": ["src", "README.md"],
+  "scripts": { "test": "bun test", "typecheck": "tsc --noEmit" },
+  "dependencies": {
+    "@opencode-ai/plugin": "1.18.31",
+    "@opencode-ai/sdk": "1.18.31"
+  },
+  "devDependencies": { "@types/bun": "1.3.10", "typescript": "5.9.3" }
+}
