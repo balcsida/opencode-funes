@@ -47,17 +47,21 @@ const plugin: Plugin = async ({ client, directory }) => {
         for (const session of await listSessions(client, directory, abort.signal)) if (session.time.updated > since) pending.add(session.id);
         sweep = false;
       }
-      while (pending.size && !abort.signal.aborted) {
-        const id = pending.values().next().value!;
+      // A session that cannot be converted waits for the retry, and keeps nothing from funes:
+      // what the others wrote is indexed first.
+      let failed: unknown;
+      for (const id of [...pending]) {
+        if (abort.signal.aborted) return;
         pending.delete(id); // An idle during the conversion re-adds this ID for a fresh snapshot.
         try { if (await emit(client, directory, id, spool, import.meta.dir, abort.signal)) written = true; }
-        catch (error) { pending.add(id); throw error; }
+        catch (error) { pending.add(id); failed ??= error; }
       }
       if (abort.signal.aborted) return;
       if (written) {
         await index(funes, abort.signal);
         written = false;
       }
+      if (failed) throw failed;
       if (swept) {
         await Bun.write(mark, String(swept));
         swept = 0;

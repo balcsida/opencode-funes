@@ -57,6 +57,7 @@ for (const name of readdirSync(spool)) {
   let current = structuredClone(messages);
   let saturated = false;
   let failList = 0;
+  const broken = new Set<string>();
   const server = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch(req) {
     const url = new URL(req.url); requests.push(url); headers.push(req.headers.get("authorization"));
     if (url.pathname === "/session") {
@@ -64,7 +65,9 @@ for (const name of readdirSync(spool)) {
       const limit = Number(url.searchParams.get("limit"));
       return Response.json(saturated ? Array.from({ length: limit }, (_, i) => ({ ...session, id: `ses_${i}` })) : rows.slice(0, limit));
     }
-    if (url.pathname.endsWith("/message")) return Response.json(current);
+    if (url.pathname.endsWith("/message")) {
+      return broken.has(url.pathname.split("/")[2]) ? Response.json({ error: "unreadable" }, { status: 500 }) : Response.json(current);
+    }
     return Response.json(rows.find(row => url.pathname.endsWith(row.id)) ?? rows[0]);
   } });
   cleanups.push(() => server.stop(true));
@@ -80,7 +83,8 @@ for (const name of readdirSync(spool)) {
   }
   return { tmp, directory, bundle, spool, binary, input, requests, headers, rows, lines, start,
     hold: () => writeFile(join(tmp, "hold"), ""), release: () => rm(join(tmp, "hold")), fail: () => writeFile(join(tmp, "fail"), ""),
-    setMessages(value: typeof messages) { current = value; }, saturate() { saturated = true; }, failListing() { failList = 1; } };
+    setMessages(value: typeof messages) { current = value; }, saturate() { saturated = true; }, failListing() { failList = 1; },
+    breakSession(id: string) { broken.add(id); } };
 }
 
 test("real SDK grows snapshots beyond 100 tied timestamps and converts every session", async () => {
@@ -217,6 +221,14 @@ test("a startup sweep takes only the sessions changed since the last one that fi
   await f.start();
   await until(async () => (await f.lines("imported")).length === 6);
   expect(f.requests.slice(seen).map(r => r.pathname).filter(path => path.endsWith("/message"))).toEqual(["/session/ses_1/message"]);
+});
+
+test("a session that cannot be converted does not keep the others from funes", async () => {
+  const f = await fixture(3);
+  f.breakSession("ses_1");
+  await f.start();
+  await until(async () => (await f.lines("imported")).length === 4);
+  expect(new Set((await f.lines("imported")).map(t => t.session_id))).toEqual(new Set(["ses_0", "ses_2"]));
 });
 
 test("the MCP server is registered on the memory the install was bound to", async () => {
