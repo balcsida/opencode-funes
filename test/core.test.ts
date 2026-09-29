@@ -76,3 +76,13 @@ test("empty text, empty thinking and unsupported parts produce no turn", () => {
   ];
   expect(turnsOf(session, input)).toHaveLength(1);
 });
+
+test("a tool call recorded without its input or output still makes two blocks funes can read", () => {
+  const input = structuredClone(messages);
+  const part = input[1].parts[1];
+  if (part.type === "tool") part.state = { status: "completed", title: "read", metadata: {}, time: { start: 1, end: 2 } } as unknown as typeof part.state;
+  expect(turnsOf(session, input)[1].blocks.slice(1, 3)).toEqual([
+    { block_type: "tool_use", text: "{}", tool_name: "read", tool_use_id: "call_one" },
+    { block_type: "tool_result", text: "", tool_name: "read", tool_use_id: "call_one" },
+  ]);
+});

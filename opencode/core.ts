@@ -20,8 +20,9 @@ export function turnsOf(session: Session, messages: SessionMessagesResponse, ord
         blocks.push({ block_type: part.type === "text" ? "text" : "thinking", text: part.text });
       } else if (part.type === "tool" && (part.state.status === "completed" || part.state.status === "error")) {
         const tool = { tool_name: part.tool, tool_use_id: part.callID };
-        blocks.push({ block_type: "tool_use", text: JSON.stringify(part.state.input), ...tool },
-          { block_type: "tool_result", text: part.state.status === "completed" ? part.state.output : part.state.error, ...tool });
+        // Whatever the store holds, a block without its text would have funes refuse the session.
+        blocks.push({ block_type: "tool_use", text: JSON.stringify(part.state.input ?? {}), ...tool },
+          { block_type: "tool_result", text: (part.state.status === "completed" ? part.state.output : part.state.error) ?? "", ...tool });
       }
     }
     if (!blocks.length) return [];
