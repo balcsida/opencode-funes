@@ -60,11 +60,15 @@ add() {
     # The funes to run, resolved now: OpenCode may be started with a PATH that does not hold it.
     bin=${FUNES_BIN:-funes}
     printf '%s\n' "$(command -v "$bin" || printf '%s' "$bin")" >"$HERE/bin"
+    # The seed: without the marks of what was swept, the plugin converts a project's whole
+    # history the next time OpenCode opens it, which is how a memory is rebuilt. The seq each
+    # turn was given stays.
+    rm -rf "$HERE/swept"
 
     mkdir -p "$(dirname "$plugin")"
     printf '%s\nexport { default } from "%s/plugin.ts";\n' "$MARK" "$HERE" >"$plugin"
     echo "installed funes into OpenCode — recall and per-turn indexing are active from its next" \
-        "start. A project's existing sessions are converted the first time OpenCode opens it."
+        "start. A project's existing sessions are converted the next time OpenCode opens it."
 }
 
 remove() {

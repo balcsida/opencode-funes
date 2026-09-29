@@ -59,6 +59,19 @@ test("a re-run without a memory unbinds the one bound before", async () => {
   expect(existsSync(join(f.bundle, "memory"))).toBe(false);
 });
 
+test("add again forgets what was swept and keeps the seq each turn was given", async () => {
+  const f = await installed();
+  expect(f.setup("add")).toBe(0);
+  await mkdir(join(f.bundle, "swept"));
+  await writeFile(join(f.bundle, "swept/project"), "1000");
+  await mkdir(join(f.bundle, "seq"));
+  await writeFile(join(f.bundle, "seq/ses_one.json"), '["msg_001"]');
+  expect(f.setup("add")).toBe(0);
+  // History is converted anew, which is how a memory is rebuilt; funes drops what it holds.
+  expect(existsSync(join(f.bundle, "swept"))).toBe(false);
+  expect(await f.record("seq/ses_one.json")).toBe('["msg_001"]');
+});
+
 test("the plugin file follows XDG_CONFIG_HOME", async () => {
   const xdg = await mkdtemp(join(tmpdir(), "opencode-funes-xdg-"));
   cleanups.push(() => rm(xdg, { recursive: true, force: true }));
