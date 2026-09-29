@@ -1,7 +1,7 @@
 {
   "name": "opencode-funes",
-  "version": "0.1.0",
-  "description": "Index completed OpenCode sessions into Funes",
+  "version": "0.2.0",
+  "description": "funes integration for OpenCode: recall tools and per-turn indexing",
   "type": "module",
   "exports": "./opencode/plugin.ts",
   "bin": { "opencode-funes": "./src/cli.ts" },
