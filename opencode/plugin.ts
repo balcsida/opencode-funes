@@ -1,11 +1,13 @@
 import type { Plugin } from "@opencode-ai/plugin";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { emit, index, listSessions } from "./core";
 
-// What `setup add` recorded beside this plugin, or "" when it recorded nothing.
+// What is recorded beside this plugin under `name`, by `setup add` or by the plugin itself, or ""
+// when nothing is.
 function bound(name: string) {
-  try { return readFileSync(join(import.meta.dir, name), "utf8").trim(); } catch { return ""; }
+  try { return readFileSync(resolve(import.meta.dir, name), "utf8").trim(); } catch { return ""; }
 }
 
 const plugin: Plugin = async ({ client, directory }) => {
@@ -17,6 +19,11 @@ const plugin: Plugin = async ({ client, directory }) => {
   const pending = new Set<string>();
   const abort = new AbortController();
   let sweep = true;
+  // When the last sweep of this directory to finish had started: the sessions unchanged since
+  // are funes's already. funes drains the spool, so only a mark kept here can say so.
+  const mark = join(import.meta.dir, "swept", createHash("sha1").update(directory).digest("hex"));
+  // When the sweep in progress started, until the mark says so.
+  let swept = 0;
   // Whether the spool holds turns funes has not been asked to index.
   let written = false;
   let running: Promise<void> | undefined;
@@ -33,7 +40,11 @@ const plugin: Plugin = async ({ client, directory }) => {
   async function drain() {
     try {
       if (sweep) {
-        for (const session of await listSessions(client, directory, abort.signal)) pending.add(session.id);
+        const since = Number(bound(mark)) || 0;
+        swept = Date.now();
+        // ponytail: a turn another OpenCode finishes after this listing is left to that process's
+        // own idle; sweep from a margin before the mark if sessions prove to go missing.
+        for (const session of await listSessions(client, directory, abort.signal)) if (session.time.updated > since) pending.add(session.id);
         sweep = false;
       }
       while (pending.size && !abort.signal.aborted) {
@@ -42,9 +53,14 @@ const plugin: Plugin = async ({ client, directory }) => {
         try { if (await emit(client, directory, id, spool, import.meta.dir, abort.signal)) written = true; }
         catch (error) { pending.add(id); throw error; }
       }
-      if (written && !abort.signal.aborted) {
+      if (abort.signal.aborted) return;
+      if (written) {
         await index(funes, abort.signal);
         written = false;
+      }
+      if (swept) {
+        await Bun.write(mark, String(swept));
+        swept = 0;
       }
       retry = 1000;
     } catch (error) {

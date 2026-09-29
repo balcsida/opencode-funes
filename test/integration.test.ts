@@ -189,6 +189,27 @@ test("the startup sweep converts every session before funes is asked once", asyn
   ]);
 });
 
+test("a startup sweep takes only the sessions changed since the last one that finished", async () => {
+  const f = await fixture(2);
+  const first = await f.start();
+  await until(async () => (await readdir(join(f.bundle, "swept")).catch(() => [])).length === 1);
+  await first.dispose?.();
+  expect(await f.lines("imported")).toHaveLength(4);
+
+  let seen = f.requests.length;
+  const second = await f.start();
+  await until(() => f.requests.length > seen);
+  await Bun.sleep(100);
+  expect(f.requests.slice(seen).map(r => r.pathname)).toEqual(["/session"]);
+  await second.dispose?.();
+
+  f.rows[1] = { ...f.rows[1], time: { created: 1000, updated: Date.now() + 1000 } };
+  seen = f.requests.length;
+  await f.start();
+  await until(async () => (await f.lines("imported")).length === 6);
+  expect(f.requests.slice(seen).map(r => r.pathname).filter(path => path.endsWith("/message"))).toEqual(["/session/ses_1/message"]);
+});
+
 test("the MCP server is registered on the memory the install was bound to", async () => {
   const f = await fixture(1, { memory: "acme/kb" });
   const hooks = await f.start();
