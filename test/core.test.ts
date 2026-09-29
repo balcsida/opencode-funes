@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mapSession } from "../src/core";
+import { mapSession } from "../opencode/core";
 import { messages, session } from "./fixtures";
 
 test("maps native IDs, timestamps, thinking and paired terminal tool blocks", () => {

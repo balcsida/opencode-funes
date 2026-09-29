@@ -15,7 +15,7 @@ Run `bun install` in this repository. Add this plugin to your project's `opencod
 {
   "$schema": "https://opencode.ai/config.json",
   "plugin": [
-    ["file:///absolute/path/opencode-funes/src/index.ts", {"funes": "/absolute/path/to/funes"}]
+    ["file:///absolute/path/opencode-funes/opencode/plugin.ts", {"funes": "/absolute/path/to/funes"}]
   ]
 }
 ```

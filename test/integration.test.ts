@@ -4,8 +4,8 @@ import type { Config, PluginInput } from "@opencode-ai/plugin";
 import { mkdtemp, rm, chmod, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { backfill, ingest, listSessions, mapSession } from "../src/core";
-import plugin from "../src/index";
+import { backfill, ingest, listSessions, mapSession } from "../opencode/core";
+import plugin from "../opencode/plugin";
 import { messages, session } from "./fixtures";
 
 const cleanups: Array<() => unknown> = [];

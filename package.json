@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "description": "Index completed OpenCode sessions into Funes",
   "type": "module",
-  "exports": "./src/index.ts",
+  "exports": "./opencode/plugin.ts",
   "bin": { "opencode-funes": "./src/cli.ts" },
-  "files": ["src", "README.md"],
+  "files": ["opencode", "src", "README.md"],
   "scripts": { "test": "bun test", "typecheck": "tsc --noEmit" },
   "dependencies": {
     "@opencode-ai/plugin": "1.18.31",

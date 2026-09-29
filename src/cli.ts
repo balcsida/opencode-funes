@@ -2,7 +2,7 @@
 import { parseArgs } from "node:util";
 import { isAbsolute } from "node:path";
 import { createOpencodeClient } from "@opencode-ai/sdk";
-import { backfill } from "./core";
+import { backfill } from "../opencode/core";
 
 try {
   const { values, positionals } = parseArgs({ args: process.argv.slice(2), allowPositionals: true,
