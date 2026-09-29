@@ -1,0 +1,97 @@
+#!/bin/sh
+# funes's OpenCode integration: load the plugin beside this script into OpenCode, bind the memory
+# it recalls from, and record where its turns files go.
+#
+# OpenCode loads every file in its config directory's `plugins/`, so the wiring is one file there
+# that re-exports plugin.ts from here. Nothing in opencode.json is edited: the plugin registers
+# `funes mcp` itself, and converts each session into the spool funes indexes.
+set -eu
+
+HERE=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+# The first line of the file OpenCode loads: what tells funes's from one the user put there.
+MARK='// Written by funes add opencode; funes remove opencode deletes it.'
+
+usage() {
+    echo "usage: setup add [MEMORY] | setup remove" >&2
+    exit 2
+}
+
+# The directory funes drains for this agent. funes hands us its home and our id; the plugin sees
+# neither, so the resolved path is written beside it.
+spool_dir() {
+    printf '%s/spool/%s\n' "${FUNES_HOME:-$HOME/.funes}" "${FUNES_AGENT_ID:-opencode}"
+}
+
+# The file OpenCode loads at startup, user-wide.
+plugin_file() {
+    printf '%s/opencode/plugins/funes.ts\n' "${XDG_CONFIG_HOME:-$HOME/.config}"
+}
+
+# Whether the plugin file is funes's to write or delete: absent, or one this script wrote. A link
+# is never ours — writing through it would land wherever it points.
+ours() {
+    [ -e "$1" ] || [ -L "$1" ] || return 0
+    [ ! -L "$1" ] && [ "$(head -n 1 "$1" 2>/dev/null)" = "$MARK" ]
+}
+
+add() {
+    plugin=$(plugin_file)
+    if ! ours "$plugin"; then
+        echo "$plugin exists and is not funes's — move it away, then re-run this command." >&2
+        exit 1
+    fi
+    # The plugin file names this directory in a JS string.
+    case $HERE in
+    *[\"\\]*)
+        echo "$HERE holds a quote or a backslash, which OpenCode's plugin file cannot name." >&2
+        exit 1
+        ;;
+    esac
+
+    # The memory plugin.ts reads at startup; absent is the local memory.
+    if [ -n "${1:-}" ]; then
+        printf '%s\n' "$1" >"$HERE/memory"
+    else
+        rm -f "$HERE/memory"
+    fi
+    spool=$(spool_dir)
+    mkdir -p "$spool"
+    printf '%s\n' "$spool" >"$HERE/spool"
+    # The funes to run, resolved now: OpenCode may be started with a PATH that does not hold it.
+    bin=${FUNES_BIN:-funes}
+    printf '%s\n' "$(command -v "$bin" || printf '%s' "$bin")" >"$HERE/bin"
+
+    mkdir -p "$(dirname "$plugin")"
+    printf '%s\nexport { default } from "%s/plugin.ts";\n' "$MARK" "$HERE" >"$plugin"
+    echo "installed funes into OpenCode — recall and per-turn indexing are active from its next" \
+        "start. A project's existing sessions are converted the first time OpenCode opens it."
+}
+
+remove() {
+    plugin=$(plugin_file)
+    if ours "$plugin"; then
+        rm -f "$plugin"
+    else
+        echo "$plugin is not funes's — left in place." >&2
+    fi
+    # The spool holds converted copies of OpenCode's own sessions, so dropping it loses nothing a
+    # re-add cannot rebuild — and leaving it would have funes keep indexing an agent it no longer
+    # serves.
+    rm -rf "$(spool_dir)" "$HERE/seq" "$HERE/swept"
+    rm -f "$HERE/memory" "$HERE/spool" "$HERE/bin"
+    echo "removed funes from OpenCode — the plugin file, its spool and its records."
+}
+
+case "${1:-}" in
+add)
+    shift
+    [ $# -le 1 ] || usage
+    add "${1:-}"
+    ;;
+remove)
+    shift
+    [ $# -eq 0 ] || usage
+    remove
+    ;;
+*) usage ;;
+esac
