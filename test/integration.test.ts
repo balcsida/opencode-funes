@@ -122,6 +122,15 @@ test("a session is one turns file named from its id, one turn a line, stamped wi
   expect((await stat(file)).mtimeMs).toBe(1000);
 });
 
+// funes's own verdict on the format, for a funes on the box: `FUNES_BIN=/path/to/funes bun test`.
+test.skipIf(!process.env.FUNES_BIN)("funes index --check accepts a session as it is written", async () => {
+  const f = await fixture();
+  await emit(f.input.client, f.directory, "ses_0", f.spool);
+  const env = { ...process.env, FUNES_HOME: join(f.tmp, "checked") };
+  const check = Bun.spawnSync([process.env.FUNES_BIN!, "index", "--check", f.spool], { env, stdout: "pipe", stderr: "pipe" });
+  expect(check.exitCode).toBe(0);
+});
+
 test("a session with nothing finished writes no file", async () => {
   const f = await fixture();
   f.setMessages([]);
