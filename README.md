@@ -10,12 +10,15 @@ so it needs funes **1.4.0** or newer. It is developed against OpenCode **1.18.31
 
 ## Install
 
-Clone this repository and hand funes the bundle in it:
+Install the package and hand funes the bundle in it:
 
 ```sh
-funes add opencode --from /absolute/path/opencode-funes/opencode
-funes add opencode <user|org>/funes-memory --from /absolute/path/opencode-funes/opencode
+npm install -g opencode-funes
+funes add opencode --from "$(npm root -g)/opencode-funes/opencode"
+funes add opencode <user|org>/funes-memory --from "$(npm root -g)/opencode-funes/opencode"
 ```
+
+A clone of this repository works the same way: name its `opencode` directory with `--from`.
 
 funes asks you to confirm before it runs files it did not publish — once, until they change.
 The second form binds a memory: recall reads it, and `funes add` does the first push there.
@@ -44,7 +47,7 @@ custom funes server, are preserved. The agent discovers the tools from funes its
 plugin does not restate them.
 
 Re-run `funes add opencode [memory]` to change the memory, and name `--from` again to install
-a newer checkout. Either also makes the plugin convert each project's history anew, which is
+a newer version. Either also makes the plugin convert each project's history anew, which is
 how a memory is rebuilt. `funes remove opencode` takes the plugin file, the spool and the
 bundle away, and leaves your memory and OpenCode's own sessions untouched.
 
@@ -123,3 +126,10 @@ models or running funes are required. To try a working copy in OpenCode itself:
 funes add opencode local --from ./opencode
 funes remove opencode
 ```
+
+## Release
+
+Releases are driven by semver tags named `v*.*.*`, signed with a key listed in
+`.github/release-allowed-signers` and pointing at a commit on `main`. The release workflow checks
+that the tag, `package.json` and `opencode/manifest.json` agree on the version, runs the tests and
+the typecheck, publishes to npm with provenance, and creates the GitHub release.
