@@ -1,5 +1,9 @@
 import type { Session, SessionMessagesResponse } from "@opencode-ai/sdk";
+import type { MessageV2, Row, SessionV2 } from "../opencode/core";
 
+export const row: Row = { id: "ses_one", directory: "/work/project", updated: 1000 };
+
+// One exchange as OpenCode 1 serves it: a session, and messages made of parts.
 export const session: Session = {
   id: "ses_one", projectID: "project", directory: "/work/project",
   title: "fixture", version: "1.18.31", time: { created: 1000, updated: 1000 },
@@ -22,6 +26,21 @@ export const messages: SessionMessagesResponse = [
       { id: "prt_004", sessionID: "ses_one", messageID: "msg_002", type: "tool", tool: "bash", callID: "call_two",
         state: { status: "error", input: { command: "false" }, error: "exit 1", time: { start: 2300, end: 2400 } } },
       { id: "prt_005", sessionID: "ses_one", messageID: "msg_002", type: "text", text: "It stores memories." },
+    ],
+  },
+];
+
+// The same exchange as OpenCode 2 serves it: messages are one object each.
+export const sessionV2: SessionV2 = { id: "ses_one", location: { directory: "/work/project" }, time: { created: 1000, updated: 1000 } };
+export const messagesV2: MessageV2[] = [
+  { type: "user", id: "msg_001", text: "Explain this project", time: { created: 1000 } },
+  {
+    type: "assistant", id: "msg_002", time: { created: 2000, completed: 3000 },
+    content: [
+      { type: "reasoning", text: "Inspect first" },
+      { type: "tool", id: "call_one", name: "read", state: { status: "completed", input: { path: "README.md" }, content: [{ type: "text", text: "A memory tool" }] } },
+      { type: "tool", id: "call_two", name: "bash", state: { status: "error", input: { command: "false" }, error: { message: "exit 1" } } },
+      { type: "text", text: "It stores memories." },
     ],
   },
 ];
