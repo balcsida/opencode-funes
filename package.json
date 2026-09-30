@@ -1,6 +1,6 @@
 {
   "name": "opencode-funes",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "funes integration for OpenCode: recall tools and per-turn indexing",
   "author": "Dávid Balatoni <balcsida@gmail.com>",
   "repository": {
