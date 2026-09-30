@@ -2,14 +2,40 @@
   "name": "opencode-funes",
   "version": "0.2.0",
   "description": "funes integration for OpenCode: recall tools and per-turn indexing",
+  "author": "Dávid Balatoni <balcsida@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/balcsida/opencode-funes.git"
+  },
+  "homepage": "https://github.com/balcsida/opencode-funes",
+  "bugs": "https://github.com/balcsida/opencode-funes/issues",
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "funes",
+    "memory",
+    "mcp"
+  ],
   "type": "module",
   "exports": "./opencode/plugin.ts",
-  "bin": { "opencode-funes": "./src/cli.ts" },
-  "files": ["opencode", "src", "README.md"],
-  "scripts": { "test": "bun test", "typecheck": "tsc --noEmit" },
+  "bin": {
+    "opencode-funes": "./src/cli.ts"
+  },
+  "files": [
+    "opencode",
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
   "dependencies": {
     "@opencode-ai/plugin": "1.18.31",
     "@opencode-ai/sdk": "1.18.31"
   },
-  "devDependencies": { "@types/bun": "1.3.10", "typescript": "5.9.3" }
+  "devDependencies": {
+    "@types/bun": "1.3.10",
+    "typescript": "5.9.3"
+  }
 }
