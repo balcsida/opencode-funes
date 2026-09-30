@@ -105,7 +105,7 @@ for (const name of readdirSync(spool)) {
   cleanups.push(() => { if (previous === undefined) delete process.env.XDG_STATE_HOME; else process.env.XDG_STATE_HOME = previous; });
   await mkdir(join(state, "opencode"), { recursive: true });
   await writeFile(join(state, "opencode/service.json"), JSON.stringify({ id: "svc", version: "2.0.20", url: server.url.toString(), pid, password: "test" }));
-  const events: Array<{ type: string; location?: { directory: string }; data?: { sessionID?: string } }> = [];
+  const events: Array<{ type: string; data?: { sessionID?: string; status?: { type: string } } }> = [];
   let arrived: (() => void) | undefined;
   const mcp = new Map<string, unknown>();
   const ctx = {
@@ -135,7 +135,11 @@ for (const name of readdirSync(spool)) {
     hold: () => writeFile(join(tmp, "hold"), ""), release: () => rm(join(tmp, "hold")), fail: () => writeFile(join(tmp, "fail"), ""),
     setMessages(value: unknown) { current = value; }, saturate() { saturated = true; }, failListing() { failList = 1; },
     breakSession(id: string) { broken.add(id); },
-    idleV2(sessionID: string, location?: string) { events.push({ type: "session.idle", ...(location && { location: { directory: location } }), data: { sessionID } }); arrived?.(); } };
+    // What OpenCode 2 emits as a session runs, then ends.
+    idleV2(sessionID: string) {
+      events.push({ type: "session.execution.started", data: { sessionID } }, { type: "session.execution.succeeded", data: { sessionID } });
+      arrived?.();
+    } };
 }
 
 test("real SDK grows snapshots beyond 100 tied timestamps and converts every session", async () => {
@@ -329,11 +333,13 @@ test("OpenCode 2: setup registers the MCP server, sweeps through the service, fo
   const newer = structuredClone(messagesV2);
   if (newer[0].type === "user") newer[0].text = "newer snapshot";
   f.setMessages(newer);
-  // The stream is every location's; an idle elsewhere is that location's instance's to convert.
-  f.idleV2("ses_0", join(f.tmp, "elsewhere"));
-  f.idleV2("ses_1", f.directory);
+  // Every project's instance sees every session end; one of another project is not this one's.
+  f.rows.push({ ...session, id: "ses_elsewhere", directory: join(f.tmp, "elsewhere") });
+  f.idleV2("ses_elsewhere");
+  f.idleV2("ses_1");
   await until(async () => (await f.lines("imported")).length === 6);
   expect((await f.lines("imported")).slice(4).map(t => [t.session_id, t.blocks[0].text])).toEqual([["ses_1", "newer snapshot"], ["ses_1", "Inspect first"]]);
+  expect(f.requests.filter(r => r.pathname.includes("ses_elsewhere")).map(r => r.pathname)).toEqual(["/api/session/ses_elsewhere", "/api/session/ses_elsewhere/message"]);
   await cleanup?.();
   f.idleV2("ses_0");
   await Bun.sleep(100);

@@ -26,9 +26,10 @@ const memory = bound("memory");
 const spool = bound("spool");
 const command = [funes, "mcp", ...(memory ? [memory] : [])];
 
-// What both OpenCodes share once they have handed over a source: the sessions of `directory`
-// changed since the last sweep are converted, then each session as it goes idle, and funes
-// indexes what was written.
+// What both OpenCodes share once they have handed over a source: from `start`, the sessions of
+// `directory` changed since the last sweep are converted, then each session of it as it goes
+// idle, and funes indexes what was written. Every event reaches every project's instance of
+// this plugin; a session of another project is that project's instance's to convert.
 function sync(directory: string, source: Source) {
   const pending = new Set<string>();
   const abort = new AbortController();
@@ -69,7 +70,7 @@ function sync(directory: string, source: Source) {
       for (const id of [...pending]) {
         if (abort.signal.aborted) return;
         pending.delete(id); // An idle during the conversion re-adds this ID for a fresh snapshot.
-        try { if (await emit(source, id, spool, here, abort.signal)) written = true; }
+        try { if (await emit(source, id, spool, here, abort.signal, directory)) written = true; }
         catch (error) { pending.add(id); failed ??= error; log(`convert ${id}: ${reason(error)}`); }
       }
       if (abort.signal.aborted) return;
@@ -92,8 +93,8 @@ function sync(directory: string, source: Source) {
       retry = Math.min(retry * 2, 60_000);
     }
   }
-  wake();
   return {
+    start: wake,
     idle(id: string) {
       if (abort.signal.aborted) return;
       pending.add(id);
@@ -121,9 +122,12 @@ function service(): { url: string; password?: string } | undefined {
 // The OpenCode 2 plugin context (packages/plugin/src/promise), as far as it is used here.
 type Context = {
   location: { directory: string };
-  event: { subscribe(options?: { signal?: AbortSignal }): AsyncIterable<{ type: string; location?: { directory: string }; data?: { sessionID?: string } }> };
+  event: { subscribe(options?: { signal?: AbortSignal }): AsyncIterable<{ type: string; data?: { sessionID?: string; status?: { type: string } } }> };
   mcp: { transform(edit: (editor: { get(name: string): unknown; set(name: string, config: { type: "local"; command: string[] }): void }) => void): Promise<unknown> };
 };
+
+// The events that end a session's run in OpenCode 2, and the one its docs name for going idle.
+const ENDED = new Set(["session.execution.succeeded", "session.execution.failed", "session.execution.interrupted", "session.idle"]);
 
 // One default export for both: OpenCode 2 calls `setup`, OpenCode 1.18.29 and newer call `server`.
 const plugin: PluginModule & { id: string; setup(ctx: Context): Promise<(() => Promise<void>) | undefined> } = {
@@ -138,22 +142,25 @@ const plugin: PluginModule & { id: string; setup(ctx: Context): Promise<(() => P
     const { directory } = ctx.location;
     const run = sync(directory, sourceV2(found.url, directory, headers));
     const abort = new AbortController();
+    // Subscribed before the sweep lists: a session that ends while this plugin loads is either
+    // listed as changed or seen ending, never lost between the two.
     void (async () => {
       try {
-        // The stream carries every location's events; a session of another location is that
-        // location's own plugin instance's to convert.
+        // A session has gone idle when its execution ends. 2.0.20 publishes no `session.idle`
+        // or `session.status`, which its schema declares; they are taken too, should one appear.
         for await (const event of ctx.event.subscribe({ signal: abort.signal })) {
-          if (event.type !== "session.idle" || !event.data?.sessionID) continue;
-          if (event.location && event.location.directory !== directory) continue;
-          run.idle(event.data.sessionID);
+          const idle = ENDED.has(event.type) || (event.type === "session.status" && event.data?.status?.type === "idle");
+          if (idle && event.data?.sessionID) run.idle(event.data.sessionID);
         }
       } catch (error) { if (!abort.signal.aborted) log(`events: ${reason(error)}`); }
     })();
+    run.start();
     return async () => { abort.abort(); await run.dispose(); };
   },
   async server({ client, directory }: PluginInput) {
     const run = spool ? sync(directory, sourceV1(client, directory)) : undefined;
     if (!spool) log("no spool is recorded, so sessions are not indexed; install with `funes add opencode --from <bundle>`");
+    run?.start();
     return {
       config: async config => {
         config.mcp ??= {};

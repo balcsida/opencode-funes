@@ -163,11 +163,12 @@ export async function replace(path: string, body: string, time?: Date) {
 
 // A session's finished turns as `<out>/<session id>.funes.jsonl`, whole: funes stores what it
 // does not hold and drops the rest. `records` keeps each session's seq order between runs, since
-// funes drains what is written; without it a session is numbered as it stands. Says whether
-// there was anything to write.
-export async function emit(source: Source, id: string, out: string, records?: string, signal?: AbortSignal) {
+// funes drains what is written; without it a session is numbered as it stands. With `within`, a
+// session of another directory is not the caller's to write. Says whether anything was written.
+export async function emit(source: Source, id: string, out: string, records?: string, signal?: AbortSignal, within?: string) {
   if (!/^[\w-]+$/.test(id)) throw new Error(`OpenCode session id ${JSON.stringify(id)} cannot name a file`);
   const { session, messages } = await source.read(id, signal);
+  if (within && session.directory !== within) return false;
   const record = records && join(records, "seq", `${id}.json`);
   const order: string[] = record ? await readFile(record, "utf8").then(JSON.parse).catch(() => []) : [];
   const known = order.length;
