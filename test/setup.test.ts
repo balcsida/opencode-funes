@@ -86,8 +86,9 @@ test("remove takes the plugin file, the spool and the records, and may be repeat
   expect(f.setup("add", "acme/kb")).toBe(0);
   await mkdir(join(f.bundle, "seq"));
   await mkdir(join(f.bundle, "swept"));
+  await writeFile(join(f.bundle, "funes-sync.log"), "");
   expect(f.setup("remove")).toBe(0);
-  for (const gone of [f.shim, f.spool, ...["spool", "bin", "memory", "seq", "swept"].map(name => join(f.bundle, name))]) {
+  for (const gone of [f.shim, f.spool, ...["spool", "bin", "memory", "seq", "swept", "funes-sync.log"].map(name => join(f.bundle, name))]) {
     expect(existsSync(gone)).toBe(false);
   }
   expect(f.setup("remove")).toBe(0);
