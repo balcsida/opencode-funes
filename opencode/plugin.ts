@@ -121,7 +121,7 @@ function service(): { url: string; password?: string } | undefined {
 // The OpenCode 2 plugin context (packages/plugin/src/promise), as far as it is used here.
 type Context = {
   location: { directory: string };
-  event: { subscribe(options?: { signal?: AbortSignal }): AsyncIterable<{ type: string; data?: { sessionID?: string } }> };
+  event: { subscribe(options?: { signal?: AbortSignal }): AsyncIterable<{ type: string; location?: { directory: string }; data?: { sessionID?: string } }> };
   mcp: { transform(edit: (editor: { get(name: string): unknown; set(name: string, config: { type: "local"; command: string[] }): void }) => void): Promise<unknown> };
 };
 
@@ -135,12 +135,17 @@ const plugin: PluginModule & { id: string; setup(ctx: Context): Promise<(() => P
     const found = service();
     if (!found) return void log("no background service registration names this process, so sessions are not indexed; OpenCode 2 reads them through the service it runs as");
     const headers = found.password ? { authorization: `Basic ${Buffer.from(`opencode:${found.password}`).toString("base64")}` } : undefined;
-    const run = sync(ctx.location.directory, sourceV2(found.url, ctx.location.directory, headers));
+    const { directory } = ctx.location;
+    const run = sync(directory, sourceV2(found.url, directory, headers));
     const abort = new AbortController();
     void (async () => {
       try {
+        // The stream carries every location's events; a session of another location is that
+        // location's own plugin instance's to convert.
         for await (const event of ctx.event.subscribe({ signal: abort.signal })) {
-          if (event.type === "session.idle" && event.data?.sessionID) run.idle(event.data.sessionID);
+          if (event.type !== "session.idle" || !event.data?.sessionID) continue;
+          if (event.location && event.location.directory !== directory) continue;
+          run.idle(event.data.sessionID);
         }
       } catch (error) { if (!abort.signal.aborted) log(`events: ${reason(error)}`); }
     })();

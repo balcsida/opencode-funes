@@ -76,7 +76,9 @@ OpenCode 1 hands the plugin a client for its server. OpenCode 2 hands it none, s
 reads sessions through the background service it runs in, whose URL and password the service
 registers in `~/.local/state/opencode/service.json` (under `$XDG_STATE_HOME` when set). A
 plugin hosted by anything else — `opencode serve` in the foreground, an embedded server —
-finds no registration naming its process, logs that, and still registers recall.
+finds no registration naming its process, logs that, and still registers recall. The service
+loads one plugin instance per project it serves and hands each the whole event stream; an
+instance converts the idle sessions of its own project and leaves the rest to theirs.
 
 funes is append-only, and OpenCode's history is not. A turn's `seq` is given once, in the
 order turns are first converted, and the plugin remembers it beside the bundle: a message
