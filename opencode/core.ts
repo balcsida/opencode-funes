@@ -135,8 +135,9 @@ export function sourceV2(url: string | URL, directory: string, headers?: Headers
     for (let cursor: string | undefined; ;) {
       const page = await get<{ data: T[]; cursor: { next?: string } }>(path, cursor ? { limit: "200", cursor } : { limit: "200", ...params }, signal);
       rows.push(...page.data);
+      // OpenCode 2.0.20 hands a next cursor with a last full page too; the page after it is empty.
       cursor = page.cursor.next;
-      if (!cursor) return rows;
+      if (!cursor || !page.data.length) return rows;
     }
   }
   const row = (s: SessionV2): Row => ({ id: s.id, directory: s.location.directory, updated: s.time.updated });
