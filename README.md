@@ -6,7 +6,8 @@ funes's read tools, and keeps your memory current by converting each session int
 
 It follows funes's
 [integration contract](https://github.com/huggingface/funes/blob/main/docs/add.md#the-integration-contract),
-so it needs funes **1.4.0** or newer. It is developed against OpenCode **1.18.31**.
+so it needs funes **1.4.0** or newer. It works with OpenCode 1 (**1.18.29** or newer) and
+OpenCode 2, and is developed against **1.18.31** and **2.0.20**.
 
 ## Install
 
@@ -28,7 +29,7 @@ What the install puts on the machine:
 | Where | What |
 | --- | --- |
 | `~/.funes/agents/opencode/` | The bundle, with the records and state it keeps beside it. |
-| `~/.config/opencode/plugins/funes.ts` | One file that loads the plugin from the bundle; under `$XDG_CONFIG_HOME` when that is set. A file of that name funes did not write is left alone, and the install stops. |
+| `~/.config/opencode/plugins/funes.ts` | One file that loads the plugin from the bundle; under `$XDG_CONFIG_HOME` when that is set. Both OpenCode 1 and 2 load it from there. A file of that name funes did not write is left alone, and the install stops. |
 | `~/.funes/spool/opencode/` | Where the plugin writes turns files, and funes drains them. |
 
 Nothing in your `opencode.json` is edited. The plugin registers the MCP server when OpenCode
@@ -44,7 +45,9 @@ loads its configuration, and only when `mcp.funes` is absent:
 
 A bound memory follows `mcp` in that command. Existing MCP entries, including a disabled or
 custom funes server, are preserved. The agent discovers the tools from funes itself; the
-plugin does not restate them.
+plugin does not restate them. OpenCode 2 has no configuration hook: there the plugin registers
+the same server through the MCP domain, again only when none named `funes` is configured, and
+it shows up as `mcp.servers.funes` in OpenCode 2's terms.
 
 Re-run `funes add opencode [memory]` to change the memory, and name `--from` again to install
 a newer version. Either also makes the plugin convert each project's history anew, which is
@@ -64,6 +67,16 @@ One message is one turn. Reasoning, text, and tool inputs, outputs and errors ar
 unsupported parts are omitted, and a message left with nothing is not a turn. Unfinished
 assistant messages and messages with pending or running tools wait for a later idle or
 sweep. Each turn keeps the session's directory as `cwd`, from which funes derives the repo.
+OpenCode 2 stores a message as one object rather than parts, and the same exchange makes the
+same turns: user and synthetic text are the user's turns, an assistant turn's parent is the
+user message before it, and agent, model and location switches, shell runs, compactions and
+idle markers are not turns.
+
+OpenCode 1 hands the plugin a client for its server. OpenCode 2 hands it none, so the plugin
+reads sessions through the background service it runs in, whose URL and password the service
+registers in `~/.local/state/opencode/service.json` (under `$XDG_STATE_HOME` when set). A
+plugin hosted by anything else — `opencode serve` in the foreground, an embedded server —
+finds no registration naming its process, logs that, and still registers recall.
 
 funes is append-only, and OpenCode's history is not. A turn's `seq` is given once, in the
 order turns are first converted, and the plugin remembers it beside the bundle: a message
@@ -96,17 +109,22 @@ funes index /absolute/path/to/turns
 
 `--url`, an absolute `--directory` and `--out` are required. Standard
 `OPENCODE_SERVER_PASSWORD` and optional `OPENCODE_SERVER_USERNAME` (default `opencode`)
-provide Basic auth. It exits nonzero on failure; re-run to retry safely. The turns carry
-the ids the plugin gives them, so a session converted this way and one captured live are one
+provide Basic auth; for an OpenCode 2 service the password is the one in its
+`service.json`. It exits nonzero on failure; re-run to retry safely. The turns carry the
+ids the plugin gives them, so a session converted this way and one captured live are one
 session in the memory. Turns are numbered as the session stands, without the plugin's
 record. Neither path writes OpenCode storage or requests model inference.
 
-Both paths use the pinned v1 SDK. Session lists grow from 100 to 102400 until a response
-is shorter than the requested limit, avoiding timestamp cursor gaps and the default
-100-session cap. A saturated ceiling fails explicitly. This relies on OpenCode 1.18.31's
-runtime `limit` support, which its v1 TypeScript query declaration omits. Message fetches
-have no limit, so OpenCode returns the complete oldest-first list. The plugin preserves
-the supplied client's transport and authentication, including in-process servers.
+The CLI tells the two servers apart by `GET /api/info`, which only OpenCode 2 answers. An
+OpenCode 1 server is read through the pinned v1 SDK: session lists grow from 100 to 102400
+until a response is shorter than the requested limit, avoiding timestamp cursor gaps and the
+default 100-session cap, and a saturated ceiling fails explicitly. This relies on OpenCode
+1.18.31's runtime `limit` support, which its v1 TypeScript query declaration omits; message
+fetches have no limit, so OpenCode returns the complete oldest-first list. An OpenCode 2
+server is read through its HTTP API with `fetch`: sessions and messages come in pages of 200
+followed by cursor, messages oldest first. The plugin preserves the supplied client's
+transport and authentication, including in-process servers, and depends on no `@opencode`
+package at runtime.
 
 ## Develop
 
@@ -118,9 +136,10 @@ FUNES_BIN=/path/to/funes bun test    # also has funes check the converter's outp
 ```
 
 Tests run the bundle as funes installs it — copied into a temporary home, its `setup` run
-with the contract's environment — against the real pinned SDK, a local HTTP fixture for
-OpenCode, and an executable standing in for funes at the subprocess boundary. No inference
-models or running funes are required. To try a working copy in OpenCode itself:
+with the contract's environment — against the real pinned SDK, a local HTTP fixture serving
+either OpenCode's API, a stand-in for the OpenCode 2 plugin context and service registration,
+and an executable standing in for funes at the subprocess boundary. No inference models or
+running funes are required. To try a working copy in OpenCode itself:
 
 ```sh
 funes add opencode local --from ./opencode
