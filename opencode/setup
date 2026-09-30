@@ -82,7 +82,7 @@ remove() {
     # re-add cannot rebuild — and leaving it would have funes keep indexing an agent it no longer
     # serves.
     rm -rf "$(spool_dir)" "$HERE/seq" "$HERE/swept"
-    rm -f "$HERE/memory" "$HERE/spool" "$HERE/bin"
+    rm -f "$HERE/memory" "$HERE/spool" "$HERE/bin" "$HERE/funes-sync.log"
     echo "removed funes from OpenCode — the plugin file, its spool and its records."
 }
 

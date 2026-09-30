@@ -1,6 +1,6 @@
 import type { Plugin } from "@opencode-ai/plugin";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { appendFileSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { emit, index, listSessions } from "./core";
 
@@ -9,6 +9,12 @@ import { emit, index, listSessions } from "./core";
 function bound(name: string) {
   try { return readFileSync(resolve(import.meta.dir, name), "utf8").trim(); } catch { return ""; }
 }
+
+// A line in the log beside this plugin: OpenCode shows a plugin's console nowhere.
+function log(line: string) {
+  try { appendFileSync(join(import.meta.dir, "funes-sync.log"), `${new Date().toISOString()} ${line}\n`); } catch {}
+}
+const reason = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 const plugin: Plugin = async ({ client, directory }) => {
   const funes = bound("bin") || "funes";
@@ -44,8 +50,10 @@ const plugin: Plugin = async ({ client, directory }) => {
         swept = Date.now();
         // ponytail: a turn another OpenCode finishes after this listing is left to that process's
         // own idle; sweep from a margin before the mark if sessions prove to go missing.
-        for (const session of await listSessions(client, directory, abort.signal)) if (session.time.updated > since) pending.add(session.id);
+        const sessions = await listSessions(client, directory, abort.signal);
+        for (const session of sessions) if (session.time.updated > since) pending.add(session.id);
         sweep = false;
+        log(`sweep ${directory}: ${pending.size} of ${sessions.length} sessions changed since ${since}`);
       }
       // A session that cannot be converted waits for the retry, and keeps nothing from funes:
       // what the others wrote is indexed first.
@@ -54,12 +62,13 @@ const plugin: Plugin = async ({ client, directory }) => {
         if (abort.signal.aborted) return;
         pending.delete(id); // An idle during the conversion re-adds this ID for a fresh snapshot.
         try { if (await emit(client, directory, id, spool, import.meta.dir, abort.signal)) written = true; }
-        catch (error) { pending.add(id); failed ??= error; }
+        catch (error) { pending.add(id); failed ??= error; log(`convert ${id}: ${reason(error)}`); }
       }
       if (abort.signal.aborted) return;
       if (written) {
         await index(funes, abort.signal);
         written = false;
+        log("index: ok");
       }
       if (failed) throw failed;
       if (swept) {
@@ -69,14 +78,14 @@ const plugin: Plugin = async ({ client, directory }) => {
       retry = 1000;
     } catch (error) {
       if (abort.signal.aborted) return;
-      console.warn("opencode-funes: indexing failed; retrying", error);
+      log(`retry in ${retry}ms: ${reason(error)}`);
       timer = setTimeout(() => { timer = undefined; wake(); }, retry);
       timer.unref();
       retry = Math.min(retry * 2, 60_000);
     }
   }
   if (spool) wake();
-  else console.warn("opencode-funes: no spool is recorded, so sessions are not indexed; install with `funes add opencode --from <bundle>`");
+  else log("no spool is recorded, so sessions are not indexed; install with `funes add opencode --from <bundle>`");
   return {
     config: async config => {
       config.mcp ??= {};

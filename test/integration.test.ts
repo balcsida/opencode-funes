@@ -229,6 +229,8 @@ test("a session that cannot be converted does not keep the others from funes", a
   await f.start();
   await until(async () => (await f.lines("imported")).length === 4);
   expect(new Set((await f.lines("imported")).map(t => t.session_id))).toEqual(new Set(["ses_0", "ses_2"]));
+  // OpenCode shows a plugin's console nowhere, so the failure is written beside the bundle.
+  await until(async () => (await readFile(join(f.bundle, "funes-sync.log"), "utf8").catch(() => "")).includes("ses_1"));
 });
 
 test("the MCP server is registered on the memory the install was bound to", async () => {
