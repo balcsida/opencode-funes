@@ -76,9 +76,10 @@ OpenCode 1 hands the plugin a client for its server. OpenCode 2 hands it none, s
 reads sessions through the background service it runs in, whose URL and password the service
 registers in `~/.local/state/opencode/service.json` (under `$XDG_STATE_HOME` when set). A
 plugin hosted by anything else — `opencode serve` in the foreground, an embedded server —
-finds no registration naming its process, logs that, and still registers recall. The service
-loads one plugin instance per project it serves and hands each the whole event stream; an
-instance converts the idle sessions of its own project and leaves the rest to theirs.
+finds no registration naming its process, logs that, and still registers recall. A session has
+gone idle when OpenCode 2 reports its execution ended. The service loads one plugin instance
+per project it serves and hands each the whole event stream; an instance converts the sessions
+of its own project and leaves the rest to theirs.
 
 funes is append-only, and OpenCode's history is not. A turn's `seq` is given once, in the
 order turns are first converted, and the plugin remembers it beside the bundle: a message
@@ -141,7 +142,21 @@ Tests run the bundle as funes installs it — copied into a temporary home, its 
 with the contract's environment — against the real pinned SDK, a local HTTP fixture serving
 either OpenCode's API, a stand-in for the OpenCode 2 plugin context and service registration,
 and an executable standing in for funes at the subprocess boundary. No inference models or
-running funes are required. To try a working copy in OpenCode itself:
+running funes are required.
+
+```sh
+bun run smoke                        # real OpenCode 1 and 2, fetched into .smoke/
+```
+
+The smoke test drives the real binaries of both lines, fetched from npm once by
+`scripts/smoke`: each is installed with the bundle the way funes installs it, given a fake
+model that streams one answer, served in the background, and asked through `opencode run`
+for a prompt, until funes is handed the session and the `funes` MCP server is listed. It
+needs no model and no network beyond the fetch. `OPENCODE_V1` and `OPENCODE_V2` name binaries
+of your own, and `SMOKE_KEEP=1` leaves the temporary homes behind, logs included. Pull
+requests run the tests, the typecheck and the smoke test on Linux and macOS.
+
+To try a working copy in OpenCode itself:
 
 ```sh
 funes add opencode local --from ./opencode

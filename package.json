@@ -28,7 +28,8 @@
   ],
   "scripts": {
     "test": "bun test",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "smoke": "sh scripts/smoke"
   },
   "dependencies": {
     "@opencode-ai/plugin": "1.18.31",

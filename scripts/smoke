@@ -1,0 +1,21 @@
+#!/bin/sh
+# Smoke-test the plugin against real OpenCode binaries of both lines: fetched from npm into
+# .smoke/ (ignored by git), then named to `bun test test/smoke.test.ts`.
+set -eu
+cd "$(dirname "$0")/.."
+
+# OpenCode 1 is the version the SDK is pinned to; OpenCode 2 is the one this is developed against.
+V1=$(bun -e "console.log(require('./package.json').dependencies['@opencode-ai/sdk'])")
+V2=${OPENCODE_V2_VERSION:-2.0.20}
+
+# Only the platform's own binary package is fetched, and the wrappers' postinstall is not needed.
+mkdir -p .smoke
+printf '{"private":true,"dependencies":{"opencode-ai":"%s","@opencode/cli":"%s"}}\n' "$V1" "$V2" >.smoke/package.json
+(cd .smoke && bun install --ignore-scripts --silent)
+# Absolute: the test starts them from a directory of its own.
+set -- "$PWD"/.smoke/node_modules/opencode-*/bin/opencode
+OPENCODE_V1=$1
+set -- "$PWD"/.smoke/node_modules/@opencode/cli-*/bin/opencode
+OPENCODE_V2=$1
+echo "OpenCode $("$OPENCODE_V1" --version) and $("$OPENCODE_V2" --version)"
+OPENCODE_V1=$OPENCODE_V1 OPENCODE_V2=$OPENCODE_V2 exec bun test test/smoke.test.ts
