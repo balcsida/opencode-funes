@@ -8,14 +8,14 @@ cd "$(dirname "$0")/.."
 V1=$(bun -e "console.log(require('./package.json').dependencies['@opencode-ai/sdk'])")
 V2=${OPENCODE_V2_VERSION:-2.0.20}
 
-# Only the platform's own binary package is fetched, and the wrappers' postinstall is not needed.
+# This platform's own binary packages, by the names the `opencode-ai` and `@opencode/cli` wrappers
+# list them under; the wrappers themselves would pull every variant of the platform, musl included.
+TARGET=$(bun -e "console.log(process.platform + '-' + (process.arch === 'arm64' ? 'arm64' : 'x64'))")
 mkdir -p .smoke
-printf '{"private":true,"dependencies":{"opencode-ai":"%s","@opencode/cli":"%s"}}\n' "$V1" "$V2" >.smoke/package.json
+printf '{"private":true,"dependencies":{"opencode-%s":"%s","@opencode/cli-%s":"%s"}}\n' "$TARGET" "$V1" "$TARGET" "$V2" >.smoke/package.json
 (cd .smoke && bun install --ignore-scripts --silent)
 # Absolute: the test starts them from a directory of its own.
-set -- "$PWD"/.smoke/node_modules/opencode-*/bin/opencode
-OPENCODE_V1=$1
-set -- "$PWD"/.smoke/node_modules/@opencode/cli-*/bin/opencode
-OPENCODE_V2=$1
+OPENCODE_V1=$PWD/.smoke/node_modules/opencode-$TARGET/bin/opencode
+OPENCODE_V2=$PWD/.smoke/node_modules/@opencode/cli-$TARGET/bin/opencode
 echo "OpenCode $("$OPENCODE_V1" --version) and $("$OPENCODE_V2" --version)"
 OPENCODE_V1=$OPENCODE_V1 OPENCODE_V2=$OPENCODE_V2 exec bun test test/smoke.test.ts

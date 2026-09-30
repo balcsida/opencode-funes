@@ -71,7 +71,17 @@ exit 0
     autoupdate: false, share: "disabled",
     provider: { fake: { name: "Fake", npm: "@ai-sdk/openai-compatible", options: { baseURL: new URL("/v1", model).href, apiKey: "fake-key" }, models: { "fake-model": { name: "Fake Model" } } } },
   }));
-  const env = { ...dirs, PATH: process.env.PATH ?? "/usr/bin:/bin", OPENCODE_DISABLE_MODELS_FETCH: "1", OPENCODE_DISABLE_AUTOUPDATE: "1" };
+  // OpenCode 1 installs `@opencode-ai/plugin` beside its config with npm before it serves, and
+  // skips that when the package is declared, locked and node_modules exists (core/src/npm.ts).
+  // This plugin imports nothing at runtime, so an empty node_modules is enough to skip it.
+  const config = join(dirs.XDG_CONFIG_HOME, "opencode");
+  const declared = { "@opencode-ai/plugin": process.env.OPENCODE_V1_PLUGIN_VERSION ?? "*" };
+  await mkdir(join(config, "node_modules"), { recursive: true });
+  await writeFile(join(config, "package.json"), JSON.stringify({ dependencies: declared }));
+  await writeFile(join(config, "package-lock.json"), JSON.stringify({ packages: { "": { dependencies: declared } } }));
+  const env = { ...dirs, PATH: process.env.PATH ?? "/usr/bin:/bin", OPENCODE_DISABLE_MODELS_FETCH: "1", OPENCODE_DISABLE_AUTOUPDATE: "1",
+    // Caches of their own: nothing of this machine's speeds an OpenCode up, or is written to.
+    npm_config_cache: join(tmp, "npm-cache"), BUN_INSTALL_CACHE_DIR: join(tmp, "bun-cache") };
   // A child that is stopped, then waited for, when the test ends; its output kept in `tmp`.
   function spawn(cmd: string[], extra: Record<string, string>, name: string) {
     const child = Bun.spawn(cmd, { cwd: project, env: { ...env, ...extra }, stdout: Bun.file(join(tmp, `${name}.out`)), stderr: Bun.file(join(tmp, `${name}.err`)) });
@@ -110,12 +120,15 @@ exit 0
   async function serving(cmd: string[], extra: Record<string, string>, check: () => Promise<void>) {
     const serve = spawn(cmd, extra, "serve");
     try { await check(); } catch (error) {
-      throw new Error(`${error instanceof Error ? error.message : error}\n--- opencode serve stderr:\n${(await serve.err().catch(() => "")).slice(-4000)}`);
+      const [out, err] = await Promise.all([serve.out().catch(() => ""), serve.err().catch(() => "")]);
+      throw new Error(`${error instanceof Error ? error.message : error}\n--- opencode serve stdout:\n${out.slice(-2000)}\n--- opencode serve stderr:\n${err.slice(-4000)}`);
     }
   }
   return { tmp, project, env, spawn, prompt, converted, serving };
 }
 const basic = (password: string) => ({ authorization: `Basic ${btoa(`opencode:${password}`)}` });
+// Whether the server answers well; a request it accepts and holds while it starts is given up on.
+const answers = (url: string, headers: Record<string, string>) => fetch(url, { headers, signal: AbortSignal.timeout(2000) }).then(r => r.ok, () => false);
 
 test.skipIf(!V1)("OpenCode 1: the plugin registers funes and converts a prompted session when it goes idle", async () => {
   const h = await home(fakeModel());
@@ -123,8 +136,8 @@ test.skipIf(!V1)("OpenCode 1: the plugin registers funes and converts a prompted
   const url = `http://127.0.0.1:${port}`;
   const auth = { OPENCODE_SERVER_PASSWORD: "smoke" };
   const headers = basic("smoke");
-  await h.serving([V1!, "serve", "--hostname", "127.0.0.1", "--port", String(port)], auth, async () => {
-    await until(() => fetch(`${url}/config`, { headers }).then(r => r.ok, () => false), "OpenCode 1 to serve");
+  await h.serving([V1!, "serve", "--hostname", "127.0.0.1", "--port", String(port), "--print-logs", "--log-level", "INFO"], auth, async () => {
+    await until(() => answers(`${url}/config`, headers), "OpenCode 1 to serve", 90_000);
     await h.prompt([V1!, "run", "--attach", url, "--dir", h.project, "--format", "json", "-m", "fake/fake-model", PROMPT], auth);
     // Registered by the plugin's config hook; OpenCode lists it once it has tried to connect.
     await until(async () => Object.keys(await (await fetch(`${url}/mcp?directory=${encodeURIComponent(h.project)}`, { headers })).json()).includes("funes"), "funes among the MCP servers");
@@ -141,7 +154,7 @@ test.skipIf(!V2)("OpenCode 2: the plugin registers funes and converts a prompted
     await until(() => existsSync(registration), "the OpenCode 2 service to register");
     const { url, password } = JSON.parse(await readFile(registration, "utf8"));
     const headers = basic(password);
-    await until(() => fetch(`${url}/api/info`, { headers }).then(r => r.ok, () => false), "OpenCode 2 to serve");
+    await until(() => answers(`${url}/api/info`, headers), "OpenCode 2 to serve", 90_000);
     await h.prompt([V2!, "run", "--server", url, "--format", "json", "-m", "fake/fake-model", PROMPT], { OPENCODE_PASSWORD: password });
     // Registered by the plugin's MCP transform; OpenCode lists it once it has tried to connect.
     await until(async () => ((await (await fetch(`${url}/api/mcp?directory=${encodeURIComponent(h.project)}`, { headers })).json()).data as Array<{ name: string }>).some(s => s.name === "funes"), "funes among the MCP servers");
