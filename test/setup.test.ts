@@ -28,9 +28,12 @@ test("add puts one plugin file where OpenCode loads it, exporting the plugin alo
   const f = await installed();
   expect(f.setup("add")).toBe(0);
   const loaded = await import(f.shim);
-  // OpenCode calls every export of a plugin file as a plugin.
+  // OpenCode 1 calls every export of a plugin file as a plugin; OpenCode 2 wants one default
+  // definition with an id and a setup, and 1.18.29 and newer take the same object's server().
   expect(Object.keys(loaded)).toEqual(["default"]);
-  expect(typeof loaded.default).toBe("function");
+  expect(loaded.default.id).toBe("funes");
+  expect(typeof loaded.default.setup).toBe("function");
+  expect(typeof loaded.default.server).toBe("function");
 });
 
 test("add records the spool it created, the funes it was handed and the memory it was bound to", async () => {
