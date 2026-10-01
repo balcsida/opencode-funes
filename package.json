@@ -19,7 +19,7 @@
   "type": "module",
   "exports": "./opencode/plugin.ts",
   "bin": {
-    "opencode-funes": "./src/cli.ts"
+    "opencode-funes": "src/cli.ts"
   },
   "files": [
     "opencode",
