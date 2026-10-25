@@ -3,9 +3,10 @@ import { createHash } from "node:crypto";
 import { appendFileSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { emit, index, replace, sourceV1, sourceV2, type Source } from "./core";
+import { emit, index, publish, replace, sourceV1, sourceV2, type Source } from "./core";
 
 const here = import.meta.dirname;
+const LOG = join(here, "funes-sync.log");
 
 // What is recorded beside this plugin under `name`, by `setup add` or by the plugin itself, or ""
 // when nothing is.
@@ -15,7 +16,7 @@ function bound(name: string) {
 
 // A line in the log beside this plugin: OpenCode shows a plugin's console nowhere.
 function log(line: string) {
-  try { appendFileSync(join(here, "funes-sync.log"), `${new Date().toISOString()} ${line}\n`); } catch {}
+  try { appendFileSync(LOG, `${new Date().toISOString()} ${line}\n`); } catch {}
 }
 const reason = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
@@ -25,15 +26,21 @@ const memory = bound("memory");
 // and converts nothing.
 const spool = bound("spool");
 const command = [funes, "mcp", ...(memory ? [memory] : [])];
+// funes names itself and the agent in its Hub requests: hf-hub appends this to its User-Agent, and
+// funes adds its own version. An origin already set is kept in front.
+const environment = { HF_HUB_USER_AGENT_ORIGIN: [process.env.HF_HUB_USER_AGENT_ORIGIN, "funes; agent/opencode"].filter(Boolean).join("; ") };
 
 // What both OpenCodes share once they have handed over a source: from `start`, the sessions of
 // `directory` changed since the last sweep are converted, then each session of it as it goes
 // idle, and funes indexes what was written. Every event reaches every project's instance of
-// this plugin; a session of another project is that project's instance's to convert.
+// this plugin; a session of another project is that project's instance's to convert. With a
+// memory bound, what this host has indexed is published at the boundaries OpenCode has: after the
+// sweep, catching up what a shutdown left behind, and at disposal.
 function sync(directory: string, source: Source) {
   const pending = new Set<string>();
   const abort = new AbortController();
   let sweep = true;
+  let publishing = Boolean(memory);
   // When the last sweep of this directory to finish had started: the sessions unchanged since
   // are funes's already. funes drains the spool, so only a mark kept here can say so.
   const mark = join(here, "swept", createHash("sha1").update(directory).digest("hex"));
@@ -75,9 +82,13 @@ function sync(directory: string, source: Source) {
       }
       if (abort.signal.aborted) return;
       if (written) {
-        await index(funes, abort.signal);
+        await index(funes, abort.signal, environment);
         written = false;
         log("index: ok");
+      }
+      if (publishing) {
+        publishing = false;
+        await push();
       }
       if (failed) throw failed;
       if (swept) {
@@ -93,6 +104,12 @@ function sync(directory: string, source: Source) {
       retry = Math.min(retry * 2, 60_000);
     }
   }
+  // The first push to a freshly bound memory is `funes add`'s or `funes bind`'s, at a terminal;
+  // funes refuses it from here, and says so in the log, until one has been made.
+  async function push() {
+    log(`push: start (${memory})`);
+    try { await publish(funes, memory, LOG, environment); } catch (error) { log(`push: ${reason(error)}`); }
+  }
   return {
     start: wake,
     idle(id: string) {
@@ -101,9 +118,11 @@ function sync(directory: string, source: Source) {
       wake();
     },
     async dispose() {
+      if (abort.signal.aborted) return;
       abort.abort();
       clearTimeout(timer);
       await running;
+      if (memory) await push();
     },
   };
 }
@@ -123,7 +142,7 @@ function service(): { url: string; password?: string } | undefined {
 type Context = {
   location: { directory: string };
   event: { subscribe(options?: { signal?: AbortSignal }): AsyncIterable<{ type: string; data?: { sessionID?: string; status?: { type: string } } }> };
-  mcp: { transform(edit: (editor: { get(name: string): unknown; set(name: string, config: { type: "local"; command: string[] }): void }) => void): Promise<unknown> };
+  mcp: { transform(edit: (editor: { get(name: string): object | undefined; set(name: string, config: { type: "local"; command: string[]; environment?: Record<string, string> }): void }) => void): Promise<void> };
 };
 
 // The events that end a session's run in OpenCode 2, and the one its docs name for going idle.
@@ -134,7 +153,7 @@ const plugin: PluginModule & { id: string; setup(ctx: Context): Promise<(() => P
   id: "funes",
   async setup(ctx) {
     // Replayable: only registers when no `funes` server, disabled or custom, is configured.
-    await ctx.mcp.transform(editor => { if (!editor.get("funes")) editor.set("funes", { type: "local", command }); });
+    await ctx.mcp.transform(editor => { if (!editor.get("funes")) editor.set("funes", { type: "local", command, environment }); });
     if (!spool) return void log("no spool is recorded, so sessions are not indexed; install with `funes add opencode --from <bundle>`");
     const found = service();
     if (!found) return void log("no background service registration names this process, so sessions are not indexed; OpenCode 2 reads them through the service it runs as");
@@ -164,7 +183,7 @@ const plugin: PluginModule & { id: string; setup(ctx: Context): Promise<(() => P
     return {
       config: async config => {
         config.mcp ??= {};
-        config.mcp.funes ??= { type: "local", command, enabled: true };
+        config.mcp.funes ??= { type: "local", command, environment, enabled: true };
       },
       event: async ({ event }) => {
         if (event.type === "session.idle") run?.idle(event.properties.sessionID);

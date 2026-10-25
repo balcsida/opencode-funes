@@ -16,6 +16,10 @@ async function until(check: () => Promise<boolean> | boolean) {
   while (!await check()) { if (Date.now() > deadline) throw new Error("Timed out"); await Bun.sleep(20); }
 }
 const idle = (sessionID: string) => ({ event: { type: "session.idle" as const, properties: { sessionID } } });
+// What the plugin has funes name itself and OpenCode as in its Hub requests, behind nothing here.
+delete process.env.HF_HUB_USER_AGENT_ORIGIN;
+const ORIGIN = "funes; agent/opencode";
+const environment = { HF_HUB_USER_AGENT_ORIGIN: ORIGIN };
 const BASIC_V1 = "Basic dGVzdDp0ZXN0"; // test:test, what the CLI and the OpenCode 1 client are given
 const BASIC_V2 = "Basic b3BlbmNvZGU6dGVzdA=="; // opencode:test, from the service registration
 
@@ -36,7 +40,10 @@ async function fixture(count = 1, { memory = "", setup = true, v2 = false, pid =
 import { appendFileSync, existsSync, readFileSync, readdirSync, unlinkSync } from "node:fs";
 const at = name => ${JSON.stringify(tmp)} + "/" + name;
 const spool = ${JSON.stringify(spool)};
-appendFileSync(at("attempts"), JSON.stringify({ args: process.argv.slice(2), files: readdirSync(spool).sort() }) + "\\n");
+// A push reads the memory, not the spool, and runs detached past the test: it writes only to the
+// log the plugin handed it, never into a directory being taken down.
+if (process.argv[2] === "push") { console.log("pushed " + process.argv[3] + " as " + process.env.HF_HUB_USER_AGENT_ORIGIN); process.exit(0); }
+appendFileSync(at("attempts"), JSON.stringify({ args: process.argv.slice(2), files: readdirSync(spool).sort(), origin: process.env.HF_HUB_USER_AGENT_ORIGIN }) + "\\n");
 while (existsSync(at("hold"))) await Bun.sleep(10);
 if (existsSync(at("fail"))) { unlinkSync(at("fail")); console.error("memory busy"); process.exit(1); }
 for (const name of readdirSync(spool)) {
@@ -107,7 +114,7 @@ for (const name of readdirSync(spool)) {
   await writeFile(join(state, "opencode/service.json"), JSON.stringify({ id: "svc", version: "2.0.20", url: server.url.toString(), pid, password: "test" }));
   const events: Array<{ type: string; data?: { sessionID?: string; status?: { type: string } } }> = [];
   let arrived: (() => void) | undefined;
-  const mcp = new Map<string, unknown>();
+  const mcp = new Map<string, object>();
   const ctx = {
     location: { directory },
     event: { async *subscribe({ signal }: { signal?: AbortSignal } = {}) {
@@ -116,7 +123,7 @@ for (const name of readdirSync(spool)) {
         await new Promise<void>(resolve => { arrived = resolve; signal?.addEventListener("abort", () => resolve(), { once: true }); });
       }
     } },
-    mcp: { async transform(edit: (editor: { get(name: string): unknown; set(name: string, config: unknown): void }) => void) {
+    mcp: { async transform(edit: (editor: { get(name: string): object | undefined; set(name: string, config: object): void }) => void) {
       edit({ get: name => mcp.get(name), set: (name, config) => mcp.set(name, config) });
     } },
   };
@@ -241,7 +248,7 @@ test("plugin preserves MCP config, retries startup and coalesces newer work duri
   const hooks = await f.start();
   const config: Config = { mcp: { other: { type: "local", command: ["other"] } } };
   await hooks.config?.(config);
-  expect(config).toEqual({ mcp: { other: { type: "local", command: ["other"] }, funes: { type: "local", command: [f.binary, "mcp"], enabled: true } } });
+  expect(config).toEqual({ mcp: { other: { type: "local", command: ["other"] }, funes: { type: "local", command: [f.binary, "mcp"], environment, enabled: true } } });
   const existing: Config = { mcp: { funes: { type: "local", command: ["custom"], enabled: false } } };
   await hooks.config?.(existing);
   expect(existing.mcp?.funes).toEqual({ type: "local", command: ["custom"], enabled: false });
@@ -255,8 +262,8 @@ test("plugin preserves MCP config, retries startup and coalesces newer work duri
   await until(async () => (await f.lines("imported")).length === 2);
   expect((await f.lines("imported"))[0].blocks[0].text).toBe("newer snapshot");
   expect(await f.lines("attempts")).toEqual([
-    { args: ["index", "--harness", "opencode"], files: ["ses_0.funes.jsonl"] },
-    { args: ["index", "--harness", "opencode"], files: ["ses_0.funes.jsonl"] },
+    { args: ["index", "--harness", "opencode"], files: ["ses_0.funes.jsonl"], origin: ORIGIN },
+    { args: ["index", "--harness", "opencode"], files: ["ses_0.funes.jsonl"], origin: ORIGIN },
   ]);
 }, 15000);
 
@@ -265,7 +272,7 @@ test("the startup sweep converts every session before funes is asked once", asyn
   await f.start();
   await until(async () => (await f.lines("imported")).length === 6);
   expect(await f.lines("attempts")).toEqual([
-    { args: ["index", "--harness", "opencode"], files: ["ses_0.funes.jsonl", "ses_1.funes.jsonl", "ses_2.funes.jsonl"] },
+    { args: ["index", "--harness", "opencode"], files: ["ses_0.funes.jsonl", "ses_1.funes.jsonl", "ses_2.funes.jsonl"], origin: ORIGIN },
   ]);
 });
 
@@ -300,12 +307,30 @@ test("a session that cannot be converted does not keep the others from funes", a
   await until(async () => (await readFile(join(f.bundle, "funes-sync.log"), "utf8").catch(() => "")).includes("ses_1"));
 });
 
-test("the MCP server is registered on the memory the install was bound to", async () => {
+test("the MCP server is registered on the memory the install was bound to, behind an origin already set", async () => {
+  process.env.HF_HUB_USER_AGENT_ORIGIN = "acme/tool";
+  cleanups.push(() => delete process.env.HF_HUB_USER_AGENT_ORIGIN);
   const f = await fixture(1, { memory: "acme/kb" });
   const hooks = await f.start();
   const config: Config = {};
   await hooks.config?.(config);
-  expect(config.mcp?.funes).toEqual({ type: "local", command: [f.binary, "mcp", "acme/kb"], enabled: true });
+  expect(config.mcp?.funes).toEqual({ type: "local", command: [f.binary, "mcp", "acme/kb"], environment: { HF_HUB_USER_AGENT_ORIGIN: "acme/tool; funes; agent/opencode" }, enabled: true });
+});
+
+test("with a memory bound, the index is published after the startup sweep and again at disposal, once", async () => {
+  const f = await fixture(1, { memory: "acme/kb" });
+  const hooks = await f.start();
+  // The push runs detached, and what it prints goes to the log beside the bundle.
+  const log = () => readFile(join(f.bundle, "funes-sync.log"), "utf8").catch(() => "");
+  const pushed = async () => (await log()).split(`pushed acme/kb as ${ORIGIN}`).length - 1;
+  await until(async () => (await pushed()) === 1);
+  expect(await log()).toMatch(/index: ok[\s\S]*push: start \(acme\/kb\)/);
+  await hooks.dispose?.();
+  await hooks.dispose?.();
+  await until(async () => (await pushed()) === 2);
+  await Bun.sleep(100);
+  expect(await pushed()).toBe(2);
+  expect((await f.lines("attempts")).map(a => a.args)).toEqual([["index", "--harness", "opencode"]]);
 });
 
 test("a plugin no setup has run for registers recall and converts nothing", async () => {
@@ -313,7 +338,7 @@ test("a plugin no setup has run for registers recall and converts nothing", asyn
   const hooks = await f.start();
   const config: Config = {};
   await hooks.config?.(config);
-  expect(config.mcp?.funes).toEqual({ type: "local", command: ["funes", "mcp"], enabled: true });
+  expect(config.mcp?.funes).toEqual({ type: "local", command: ["funes", "mcp"], environment, enabled: true });
   await hooks.event?.(idle("ses_0"));
   await Bun.sleep(100);
   expect(f.requests).toEqual([]);
@@ -323,7 +348,7 @@ test("a plugin no setup has run for registers recall and converts nothing", asyn
 test("OpenCode 2: setup registers the MCP server, sweeps through the service, follows idle events, and its cleanup stops the work", async () => {
   const f = await fixture(2, { v2: true, memory: "acme/kb" });
   const cleanup = await f.startV2();
-  expect(f.mcp.get("funes")).toEqual({ type: "local", command: [f.binary, "mcp", "acme/kb"] });
+  expect(f.mcp.get("funes")).toEqual({ type: "local", command: [f.binary, "mcp", "acme/kb"], environment });
   await until(async () => (await f.lines("imported")).length === 4);
   expect(f.requests.map(r => r.pathname)).toEqual(["/api/session", "/api/session/ses_0", "/api/session/ses_0/message", "/api/session/ses_1", "/api/session/ses_1/message"]);
   expect(f.headers.every(h => h === BASIC_V2)).toBe(true);
@@ -342,6 +367,8 @@ test("OpenCode 2: setup registers the MCP server, sweeps through the service, fo
   expect(f.requests.filter(r => r.pathname.includes("ses_elsewhere")).map(r => r.pathname)).toEqual(["/api/session/ses_elsewhere", "/api/session/ses_elsewhere/message"]);
   await cleanup?.();
   f.idleV2("ses_0");
+  // Published after the sweep and at the cleanup, as the log says once each detached push has run.
+  await until(async () => (await readFile(join(f.bundle, "funes-sync.log"), "utf8").catch(() => "")).split("pushed acme/kb").length === 3);
   await Bun.sleep(100);
   expect(await f.lines("attempts")).toHaveLength(2);
 });

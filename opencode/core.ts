@@ -1,5 +1,6 @@
 import type { OpencodeClient, SessionMessagesResponse } from "@opencode-ai/sdk";
 import { spawn } from "node:child_process";
+import { closeSync, openSync } from "node:fs";
 import { mkdir, readFile, rename, utimes, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
@@ -181,14 +182,28 @@ export async function emit(source: Source, id: string, out: string, records?: st
   return true;
 }
 
-// One budgeted step of funes over the spool; what it leaves, the next step takes.
-export function index(funes: string, signal?: AbortSignal) {
+// One budgeted step of funes over the spool; what it leaves, the next step takes. `env` is added
+// to the caller's own.
+export function index(funes: string, signal?: AbortSignal, env?: Record<string, string>) {
   return new Promise<void>((resolve, reject) => {
-    const child = spawn(funes, ["index", "--harness", "opencode"], { stdio: ["ignore", "ignore", "pipe"], signal });
+    const child = spawn(funes, ["index", "--harness", "opencode"], { stdio: ["ignore", "ignore", "pipe"], signal, env: { ...process.env, ...env } });
     let error = "";
     child.stderr.on("data", chunk => { error += chunk; });
     child.on("error", reject);
     child.on("close", code => (code === 0 ? resolve() : reject(new Error(`funes index exited ${code}: ${error.trim()}`))));
+  });
+}
+
+// `funes push <memory>`, detached, its output appended to `log`: a publish at disposal outlives
+// OpenCode, so nothing waits on it past its start, and only one that could not start is an error.
+export function publish(funes: string, memory: string, log: string, env?: Record<string, string>) {
+  return new Promise<void>((resolve, reject) => {
+    const fd = openSync(log, "a");
+    const child = spawn(funes, ["push", memory], { stdio: ["ignore", fd, fd], detached: true, env: { ...process.env, ...env } });
+    closeSync(fd);
+    child.unref();
+    child.once("spawn", resolve);
+    child.on("error", reject);
   });
 }
 
