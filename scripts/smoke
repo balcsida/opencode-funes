@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 
 # OpenCode 1 is the version the SDK is pinned to; OpenCode 2 is the one this is developed against.
 V1=$(bun -e "console.log(require('./package.json').dependencies['@opencode-ai/sdk'])")
-V2=${OPENCODE_V2_VERSION:-2.0.20}
+V2=${OPENCODE_V2_VERSION:-2.2.6}
 
 # This platform's own binary packages, by the names the `opencode-ai` and `@opencode/cli` wrappers
 # list them under; the wrappers themselves would pull every variant of the platform, musl included.

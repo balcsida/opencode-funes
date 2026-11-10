@@ -32,6 +32,43 @@ export function turnsOf(session: Row, messages: Item[], order: string[] = []): T
   });
 }
 
+// An attachment's contents are kept only when they are text and small. Images and other binaries
+// are a name: funes would store a placeholder for them, and a whole file would duplicate the repo.
+const TEXT_LIMIT = 32 * 1024;
+
+function textual(mime: string, name?: string) {
+  const type = mime.toLowerCase().split(";")[0].trim();
+  if (type.startsWith("image/") || type.startsWith("audio/") || type.startsWith("video/") || type === "application/pdf") return false;
+  if (type.startsWith("text/") || type.endsWith("+json") || type.endsWith("+xml") || type.endsWith("+yaml")) return true;
+  if (["application/json", "application/javascript", "application/xml", "application/yaml", "application/x-yaml", "application/toml", "application/x-sh", "application/sql"].includes(type)) return true;
+  return !!name && /\.(?:txt|md|markdown|json|jsonc|ya?ml|toml|csv|tsv|xml|html?|css|scss|js|jsx|mjs|cjs|ts|tsx|py|rb|go|rs|java|kt|c|h|cc|cpp|hpp|sh|bash|zsh|sql|ini|cfg|conf|log|svg)$/i.test(name);
+}
+
+// `undefined` when the bytes are empty, too big, binary, or not UTF-8: the name is the whole record then.
+function smallText(bytes: Buffer) {
+  if (!bytes.length || bytes.length > TEXT_LIMIT || bytes.includes(0)) return;
+  const text = bytes.toString("utf8");
+  return text.includes("\uFFFD") ? undefined : text;
+}
+
+// One attachment: a line naming it, then its contents when those are small text. `data` is base64,
+// `url` a `data:` URL, `snippet` a selection OpenCode already extracted.
+function attachmentBlocks(file: { mime?: string; name?: string; data?: string; url?: string; snippet?: string }): Block[] {
+  const mime = file.mime || "application/octet-stream";
+  const name = file.name || "attachment";
+  let body: string | undefined;
+  if (textual(mime, name)) {
+    if (file.data) body = smallText(Buffer.from(file.data, "base64"));
+    else if (file.url?.startsWith("data:")) {
+      const marker = ";base64,";
+      const at = file.url.indexOf(marker);
+      if (at !== -1) body = smallText(Buffer.from(file.url.slice(at + marker.length), "base64"));
+    }
+    if (body === undefined && file.snippet && Buffer.byteLength(file.snippet) <= TEXT_LIMIT && !file.snippet.includes("\0")) body = file.snippet;
+  }
+  return [{ block_type: "text", text: `[attachment] ${name} (${mime})` }, ...(body ? [{ block_type: "text" as const, text: body }] : [])];
+}
+
 // OpenCode 1: a message is its parts. Unfinished assistant messages, and messages with a tool
 // still pending or running, are left for a later snapshot.
 export function itemsV1(messages: SessionMessagesResponse): Item[] {
@@ -47,6 +84,9 @@ export function itemsV1(messages: SessionMessagesResponse): Item[] {
         // Whatever the store holds, a block without its text would have funes refuse the session.
         blocks.push({ block_type: "tool_use", text: JSON.stringify(part.state.input ?? {}), ...tool },
           { block_type: "tool_result", text: (part.state.status === "completed" ? part.state.output : part.state.error) ?? "", ...tool });
+      } else if (part.type === "file") {
+        const path = part.source && "path" in part.source ? part.source.path : undefined;
+        blocks.push(...attachmentBlocks({ mime: part.mime, name: part.filename || path, url: part.url, snippet: part.source?.text?.value }));
       }
     }
     return [{ id: info.id, role: info.role, created: info.time.created, blocks,
@@ -61,22 +101,65 @@ type ToolV2 = { type: "tool"; id: string; name: string; state:
   | { status: "streaming" | "running" }
   | { status: "completed"; input: unknown; content: ContentV2[] }
   | { status: "error"; input: unknown; error: { message: string }; content?: ContentV2[] } };
+// A file on a user message: inline bytes are base64 `data`; a media ref keeps `uri` and no bytes.
+type FileV2 = { mime?: string; name?: string; description?: string; data?: string; uri?: string; source?: { type: string; uri?: string } };
+type ShellV2 = { type: "shell"; id: string; shellID: string; command: string; status: "running" | "exited" | "timeout" | "killed"; exit?: number; output?: { output: string; truncated?: boolean }; time: { created: number; completed?: number } };
+type CompactionV2 = { type: "compaction"; id: string; status: "running" | "completed" | "failed"; reason?: "auto" | "manual"; summary?: string; time: { created: number } };
 export type MessageV2 =
-  | { type: "user" | "synthetic"; id: string; text?: string; time: { created: number } }
+  | { type: "user"; id: string; text?: string; files?: FileV2[]; time: { created: number } }
+  | { type: "synthetic"; id: string; text?: string; time: { created: number } }
   | { type: "assistant"; id: string; content: Array<{ type: "text" | "reasoning"; text: string } | ToolV2>; error?: unknown; time: { created: number; completed?: number } }
-  | { type: "agent-switched" | "model-switched" | "location-switched" | "system" | "skill" | "shell" | "compaction" | "idle"; id: string; time: { created: number } };
+  | ShellV2
+  | CompactionV2
+  | { type: "agent-switched" | "model-switched" | "location-switched" | "system" | "skill" | "idle"; id: string; time: { created: number } };
+
+// A finished `!` command: the command and the output OpenCode stored on the message, as a tool
+// call named `shell`. A page that was cut short says so. Still running waits — emitting it now
+// would keep the empty output, and funes does not replace a turn it holds.
+function shellBlocks(message: ShellV2): Block[] {
+  const tool = { tool_name: "shell", tool_use_id: message.shellID };
+  const lines: string[] = [];
+  if (message.output?.output) lines.push(message.output.output);
+  if (message.output?.truncated) lines.push("[output truncated]");
+  if (message.status !== "exited" || (message.exit !== undefined && message.exit !== 0)) lines.push(`(exit ${message.exit ?? message.status})`);
+  return [
+    { block_type: "tool_use", text: JSON.stringify({ command: message.command }), ...tool },
+    { block_type: "tool_result", text: lines.join("\n"), ...tool },
+  ];
+}
 
 // OpenCode 2: a message is one object with its content. What was said to the model is kept:
-// user and synthetic text, and assistant text, reasoning and tools. An assistant message whose
-// answer or tool has not finished waits for a later snapshot. An assistant turn's parent is the
-// user message before it, which is what OpenCode 1 recorded.
+// user and synthetic text, attachments, a finished shell command, a finished compaction summary,
+// and assistant text, reasoning and tools. An assistant message whose answer or tool has not
+// finished waits for a later snapshot, as does a shell command or compaction still running —
+// the summary and the output are final once, and a turn funes holds is not replaced. An
+// assistant turn's parent is the user message before it, which is what OpenCode 1 recorded;
+// a shell command or compaction takes that place once it is kept.
 export function itemsV2(messages: MessageV2[]): Item[] {
   let parent: string | undefined;
   return messages.flatMap((message): Item[] => {
     const item = { id: message.id, created: message.time.created };
     if (message.type === "user" || message.type === "synthetic") {
       if (message.type === "user") parent = message.id;
-      return [{ ...item, role: "user", blocks: message.text ? [{ block_type: "text" as const, text: message.text }] : [] }];
+      const blocks: Block[] = message.text ? [{ block_type: "text", text: message.text }] : [];
+      if (message.type === "user") for (const file of message.files ?? []) {
+        blocks.push(...attachmentBlocks({
+          mime: file.mime, data: file.data,
+          name: file.name || file.description || file.uri || (file.source && "uri" in file.source ? file.source.uri : undefined),
+        }));
+      }
+      return [{ ...item, role: "user", blocks }];
+    }
+    if (message.type === "shell") {
+      if (message.status === "running") return [];
+      parent = message.id;
+      return [{ ...item, role: "user", blocks: shellBlocks(message) }];
+    }
+    if (message.type === "compaction") {
+      if (message.status !== "completed" || !message.summary) return [];
+      parent = message.id;
+      const tag = message.reason ? `[compaction ${message.reason}]` : "[compaction]";
+      return [{ ...item, role: "user", blocks: [{ block_type: "text", text: `${tag}\n${message.summary}` }] }];
     }
     if (message.type !== "assistant") return [];
     if (message.time.completed === undefined && !message.error) return [];
@@ -121,7 +204,8 @@ export function sourceV1(client: OpencodeClient, directory: string): Source {
 }
 
 // OpenCode 2, through its HTTP API: cursor-paged listings under /api, read whole.
-export function sourceV2(url: string | URL, directory: string, headers?: HeadersInit): Source {
+// Without `directory` the listing is every project the server has.
+export function sourceV2(url: string | URL, directory?: string, headers?: HeadersInit): Source {
   async function get<T>(path: string, params: Record<string, string>, signal?: AbortSignal): Promise<T> {
     const target = new URL(path, url);
     for (const [key, value] of Object.entries(params)) target.searchParams.set(key, value);
@@ -143,11 +227,35 @@ export function sourceV2(url: string | URL, directory: string, headers?: Headers
   }
   const row = (s: SessionV2): Row => ({ id: s.id, directory: s.location.directory, updated: s.time.updated });
   return {
-    list: signal => pages<SessionV2>("/api/session", { directory }, signal).then(rows => rows.map(row)),
+    list: signal => pages<SessionV2>("/api/session", directory ? { directory } : {}, signal).then(rows => rows.map(row)),
     async read(id, signal) {
       const session = await get<{ data: SessionV2 }>(`/api/session/${id}`, {}, signal);
       const messages = await pages<MessageV2>(`/api/session/${id}/message`, { order: "asc" }, signal);
       return { session: row(session.data), messages: itemsV2(messages) };
+    },
+  };
+}
+
+// OpenCode 2's database, for an import while no server is running. The HTTP API is what stays
+// stable; these are the same rows it serves (`session_v2`, `session_message`), read once. The id
+// and type live in the columns, not always in the JSON.
+export async function sourceSqlite(file: string): Promise<Source> {
+  const { Database } = await import("bun:sqlite");
+  const db = new Database(file, { readonly: true });
+  const listStmt = db.query("SELECT id, directory, time_updated AS updated FROM session_v2");
+  const oneStmt = db.query("SELECT id, directory, time_updated AS updated FROM session_v2 WHERE id = ?");
+  const msgStmt = db.query("SELECT id, type, data FROM session_message WHERE session_id = ? ORDER BY seq ASC");
+  const rowOf = (row: { id: string; directory: string | null; updated: number }): Row => ({ id: row.id, directory: row.directory ?? "", updated: row.updated });
+  return {
+    async list() { return (listStmt.all() as Array<{ id: string; directory: string | null; updated: number }>).map(rowOf); },
+    async read(id) {
+      const session = oneStmt.get(id) as { id: string; directory: string | null; updated: number } | null;
+      if (!session) throw new Error(`OpenCode session ${id} is not in ${file}`);
+      const messages = (msgStmt.all(id) as Array<{ id: string; type: string; data: string }>).map(row => {
+        const data = JSON.parse(row.data) as Record<string, unknown>;
+        return { ...data, id: row.id, type: row.type } as MessageV2;
+      });
+      return { session: rowOf(session), messages: itemsV2(messages) };
     },
   };
 }

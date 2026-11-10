@@ -1,8 +1,9 @@
+import { Database } from "bun:sqlite";
 import { afterEach, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
 import { chmod, cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 const cleanups: Array<() => unknown> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
@@ -73,6 +74,22 @@ test("add again forgets what was swept and keeps the seq each turn was given", a
   // History is converted anew, which is how a memory is rebuilt; funes drops what it holds.
   expect(existsSync(join(f.bundle, "swept"))).toBe(false);
   expect(await f.record("seq/ses_one.json")).toBe('["msg_001"]');
+});
+
+test("add imports sessions stored in OpenCode's database", async () => {
+  const f = await installed({ PATH: `${dirname(process.execPath)}:/usr/bin:/bin` });
+  const dbDir = join(f.home, ".local/share/opencode");
+  await mkdir(dbDir, { recursive: true });
+  const db = new Database(join(dbDir, "opencode.db"));
+  db.run("CREATE TABLE session_v2 (id TEXT, directory TEXT, time_updated INTEGER)");
+  db.run("CREATE TABLE session_message (id TEXT, session_id TEXT, type TEXT, seq INTEGER, data TEXT)");
+  db.run("INSERT INTO session_v2 (id, directory, time_updated) VALUES (?, ?, ?)", ["ses_one", "/work/project", 1000]);
+  db.run("INSERT INTO session_message (id, session_id, type, seq, data) VALUES (?, ?, ?, ?, ?)",
+    ["msg_001", "ses_one", "user", 0, JSON.stringify({ text: "already stored", time: { created: 1000 } })]);
+  db.close();
+  expect(f.setup("add")).toBe(0);
+  const turns = (await readFile(join(f.spool, "ses_one.funes.jsonl"), "utf8")).trim().split("\n").map(line => JSON.parse(line));
+  expect(turns.map(t => t.blocks[0].text)).toEqual(["already stored"]);
 });
 
 test("the plugin file follows XDG_CONFIG_HOME", async () => {

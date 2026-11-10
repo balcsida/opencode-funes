@@ -9,7 +9,7 @@ It follows funes's
 [integration contract](https://github.com/huggingface/funes/blob/main/CONTRIBUTING.md#the-integration-contract),
 so it needs funes **1.4.0** or newer; it is developed against **1.9.1**, whose memory binding and
 publishing this README describes. It works with OpenCode 1 (**1.18.29** or newer) and OpenCode 2,
-and is developed against **1.18.31** and **2.0.20**.
+and is developed against **1.18.31** and **2.2.6**.
 
 ## Install
 
@@ -63,37 +63,49 @@ it shows up as `mcp.servers.funes` in OpenCode 2's terms.
 `funes bind <memory>` changes the memory, every installed agent following: funes re-runs this
 setup, which records the memory beside the bundle, and OpenCode takes it at its next start.
 `funes update` leaves an install named with `--from` as it is, so a newer version is the
-package updated and `funes add opencode --from …` run again. Each run of the setup also makes
-the plugin convert each project's history anew, which is how a memory is rebuilt; funes drops
-the turns it holds already. `funes remove opencode` takes the plugin file, the spool and the
-bundle away, and leaves your memory and OpenCode's own sessions untouched.
+package updated and `funes add opencode --from …` run again. Each run of the setup also imports
+every project's history anew — from a running OpenCode, or from OpenCode 2's database when none
+is — and forgets what it had swept, which is how a memory is rebuilt; funes drops the turns it
+holds already. `funes remove opencode` takes the plugin file, the spool and the bundle away,
+and leaves your memory and OpenCode's own sessions untouched.
 
 ## What is indexed, and when
 
-When OpenCode starts in a project, the plugin lists that project's sessions, child sessions
-included, and converts those changed since its last sweep there — all of them the first
-time, which is how existing history gets in. After that it converts a session each time it
-goes idle. Every conversion writes the session whole, as
-`~/.funes/spool/opencode/<session id>.funes.jsonl`, then runs `funes index --harness opencode`
-once for everything written. funes stores the turns it does not hold and drops the rest.
+When OpenCode 2 starts, and again after each session goes idle, the plugin lists every
+project's sessions, child sessions included, and converts those changed since its last
+sweep — all of them the first time, which is how existing history gets in. A session whose
+hook never fired is caught at the next turn, not only at the next start. OpenCode 1 does the
+same for the project it was opened in. `setup add` also imports what is already stored, from
+a running server or from OpenCode 2's database, and indexes it. Every conversion writes the
+session whole, as `~/.funes/spool/opencode/<session id>.funes.jsonl`, then runs
+`funes index --harness opencode` once for everything written. funes stores the turns it does
+not hold and drops the rest.
 
-One message is one turn. Reasoning, text, and tool inputs, outputs and errors are kept;
-unsupported parts are omitted, and a message left with nothing is not a turn. Unfinished
-assistant messages and messages with pending or running tools wait for a later idle or
-sweep. Each turn keeps the session's directory as `cwd`, from which funes derives the repo.
+One message is one turn. Reasoning, text, and tool inputs, outputs and errors are kept.
+A `!` shell command is a tool call named `shell` plus the output OpenCode stored on it.
+A finished compaction is the user's turn, tagged `[compaction]` and `auto` or `manual`, so
+recall can tell the summary from something the user typed. An attachment is a line naming
+the file; a text file of at most 32KiB also has its contents, and an image or other binary
+never does. Unsupported parts are omitted, and a message left with nothing is not a turn.
+Unfinished assistant messages, messages with pending or running tools, and a shell command
+or compaction that has not finished wait for a later idle or sweep. Each turn keeps the
+session's directory as `cwd`, from which funes derives the repo.
 OpenCode 2 stores a message as one object rather than parts, and the same exchange makes the
 same turns: user and synthetic text are the user's turns, an assistant turn's parent is the
-user message before it, and agent, model and location switches, shell runs, compactions and
-idle markers are not turns.
+user message before it, and agent, model and location switches and idle markers are not turns.
 
 OpenCode 1 hands the plugin a client for its server. OpenCode 2 hands it none, so the plugin
 reads sessions through the background service it runs in, whose URL and password the service
 registers in `~/.local/state/opencode/service.json` (under `$XDG_STATE_HOME` when set). A
-plugin hosted by anything else — `opencode serve` in the foreground, an embedded server —
-finds no registration naming its process, logs that, and still registers recall. A session has
-gone idle when OpenCode 2 reports its execution ended. The service loads one plugin instance
-per project it serves and hands each the whole event stream; an instance converts the sessions
-of its own project and leaves the rest to theirs.
+standalone server — `opencode serve` in the foreground, an embedded server — writes no
+registration. The plugin then uses the loopback port this process is listening on and the
+password OpenCode was started with, and looks again for two minutes, because the server may
+not be listening yet. If none answers it logs that, and still registers recall. One session
+that OpenCode keeps failing to read is given up on after a few attempts, so it does not hold
+the sweep back; a later edit of that session tries again. A session has gone idle
+when OpenCode 2 reports its execution ended. The service loads one plugin instance
+per project it serves and hands each the whole event stream; any instance may convert any
+session, and funes drops a turn it already holds.
 
 funes is append-only, and OpenCode's history is not. A turn's `seq` is given once, in the
 order turns are first converted, and the plugin remembers it beside the bundle: a message
@@ -103,7 +115,8 @@ snapshot is not a transaction across concurrent OpenCode edits.
 
 One conversion or index runs at a time. Repeated idle events coalesce, and those arriving
 during a run remain queued. Errors are logged and retried after 1, 2, 4, ... seconds, capped
-at 60 seconds. The queue is in memory; a restart sweeps again. Disposal cancels active
+at 60 seconds. A session that still fails after 5 attempts is logged and left until it
+changes. The queue is in memory; a restart sweeps again. Disposal cancels active
 requests, processes and timers.
 
 With a memory bound, the plugin publishes at the boundaries OpenCode gives it, as
@@ -134,7 +147,8 @@ bun src/cli.ts backfill \
 funes index /absolute/path/to/turns
 ```
 
-`--url`, an absolute `--directory` and `--out` are required. Standard
+`--url` and `--out` are required, with an absolute `--directory` or `--all`. `--all` lists
+every project on OpenCode 2; OpenCode 1 needs `--directory`. Standard
 `OPENCODE_SERVER_PASSWORD` and optional `OPENCODE_SERVER_USERNAME` (default `opencode`)
 provide Basic auth; for an OpenCode 2 service the password is the one in its
 `service.json`. It exits nonzero on failure; re-run to retry safely. The turns carry the
