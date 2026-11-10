@@ -97,9 +97,13 @@ user message before it, and agent, model and location switches and idle markers 
 OpenCode 1 hands the plugin a client for its server. OpenCode 2 hands it none, so the plugin
 reads sessions through the background service it runs in, whose URL and password the service
 registers in `~/.local/state/opencode/service.json` (under `$XDG_STATE_HOME` when set). A
-plugin hosted by anything else — `opencode serve` in the foreground, an embedded server —
-finds no registration naming its process, logs that, and still registers recall. A session has
-gone idle when OpenCode 2 reports its execution ended. The service loads one plugin instance
+standalone server — `opencode serve` in the foreground, an embedded server — writes no
+registration. The plugin then uses the loopback port this process is listening on and the
+password OpenCode was started with, and looks again for two minutes, because the server may
+not be listening yet. If none answers it logs that, and still registers recall. One session
+that OpenCode keeps failing to read is given up on after a few attempts, so it does not hold
+the sweep back; a later edit of that session tries again. A session has gone idle
+when OpenCode 2 reports its execution ended. The service loads one plugin instance
 per project it serves and hands each the whole event stream; any instance may convert any
 session, and funes drops a turn it already holds.
 
@@ -111,7 +115,8 @@ snapshot is not a transaction across concurrent OpenCode edits.
 
 One conversion or index runs at a time. Repeated idle events coalesce, and those arriving
 during a run remain queued. Errors are logged and retried after 1, 2, 4, ... seconds, capped
-at 60 seconds. The queue is in memory; a restart sweeps again. Disposal cancels active
+at 60 seconds. A session that still fails after 5 attempts is logged and left until it
+changes. The queue is in memory; a restart sweeps again. Disposal cancels active
 requests, processes and timers.
 
 With a memory bound, the plugin publishes at the boundaries OpenCode gives it, as
