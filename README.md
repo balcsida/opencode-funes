@@ -9,7 +9,7 @@ It follows funes's
 [integration contract](https://github.com/huggingface/funes/blob/main/CONTRIBUTING.md#the-integration-contract),
 so it needs funes **1.4.0** or newer; it is developed against **1.9.1**, whose memory binding and
 publishing this README describes. It works with OpenCode 1 (**1.18.29** or newer) and OpenCode 2,
-and is developed against **1.18.31** and **2.0.20**.
+and is developed against **1.18.31** and **2.2.6**.
 
 ## Install
 
