@@ -77,14 +77,18 @@ goes idle. Every conversion writes the session whole, as
 `~/.funes/spool/opencode/<session id>.funes.jsonl`, then runs `funes index --harness opencode`
 once for everything written. funes stores the turns it does not hold and drops the rest.
 
-One message is one turn. Reasoning, text, and tool inputs, outputs and errors are kept;
-unsupported parts are omitted, and a message left with nothing is not a turn. Unfinished
-assistant messages and messages with pending or running tools wait for a later idle or
-sweep. Each turn keeps the session's directory as `cwd`, from which funes derives the repo.
+One message is one turn. Reasoning, text, and tool inputs, outputs and errors are kept.
+A `!` shell command is a tool call named `shell` plus the output OpenCode stored on it.
+A finished compaction is the user's turn, tagged `[compaction]` and `auto` or `manual`, so
+recall can tell the summary from something the user typed. An attachment is a line naming
+the file; a text file of at most 32KiB also has its contents, and an image or other binary
+never does. Unsupported parts are omitted, and a message left with nothing is not a turn.
+Unfinished assistant messages, messages with pending or running tools, and a shell command
+or compaction that has not finished wait for a later idle or sweep. Each turn keeps the
+session's directory as `cwd`, from which funes derives the repo.
 OpenCode 2 stores a message as one object rather than parts, and the same exchange makes the
 same turns: user and synthetic text are the user's turns, an assistant turn's parent is the
-user message before it, and agent, model and location switches, shell runs, compactions and
-idle markers are not turns.
+user message before it, and agent, model and location switches and idle markers are not turns.
 
 OpenCode 1 hands the plugin a client for its server. OpenCode 2 hands it none, so the plugin
 reads sessions through the background service it runs in, whose URL and password the service
