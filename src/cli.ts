@@ -6,9 +6,9 @@ import { backfill, sourceV1, sourceV2 } from "../opencode/core";
 
 try {
   const { values, positionals } = parseArgs({ args: process.argv.slice(2), allowPositionals: true,
-    options: { url: { type: "string" }, directory: { type: "string" }, out: { type: "string" } } });
-  if (positionals.length !== 1 || positionals[0] !== "backfill" || !values.url || !values.directory || !isAbsolute(values.directory) || !values.out) {
-    throw new Error("Usage: opencode-funes backfill --url http://localhost:4096 --directory /absolute/project --out /directory/for/turns");
+    options: { url: { type: "string" }, directory: { type: "string" }, out: { type: "string" }, all: { type: "boolean" } } });
+  if (positionals.length !== 1 || positionals[0] !== "backfill" || !values.url || !values.out || (!values.all && (!values.directory || !isAbsolute(values.directory)))) {
+    throw new Error("Usage: opencode-funes backfill --url http://localhost:4096 (--directory /absolute/project | --all) --out /directory/for/turns");
   }
   const url = new URL(values.url);
   if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("--url must use HTTP or HTTPS");
@@ -17,7 +17,8 @@ try {
   const headers = password ? { Authorization: `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}` } : undefined;
   // OpenCode 2 serves its API under /api, where OpenCode 1 has nothing.
   const v2 = (await fetch(new URL("/api/info", url), { headers })).ok;
-  const source = v2 ? sourceV2(url, values.directory, headers) : sourceV1(createOpencodeClient({ baseUrl: url.toString(), headers }), values.directory);
+  if (values.all && !v2) throw new Error("OpenCode 1 backfill needs --directory; --all lists every project on OpenCode 2");
+  const source = v2 ? sourceV2(url, values.all ? undefined : values.directory, headers) : sourceV1(createOpencodeClient({ baseUrl: url.toString(), headers }), values.directory!);
   const count = await backfill(source, values.out);
   console.log(`Converted ${count} OpenCode ${v2 ? 2 : 1} sessions into ${values.out}. Index them with: funes index ${values.out}`);
 } catch (error) {

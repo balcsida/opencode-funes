@@ -1,5 +1,4 @@
 import type { PluginInput, PluginModule } from "@opencode-ai/plugin";
-import { createHash } from "node:crypto";
 import { appendFileSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
@@ -30,20 +29,22 @@ const command = [funes, "mcp", ...(memory ? [memory] : [])];
 // funes adds its own version. An origin already set is kept in front.
 const environment = { HF_HUB_USER_AGENT_ORIGIN: [process.env.HF_HUB_USER_AGENT_ORIGIN, "funes; agent/opencode"].filter(Boolean).join("; ") };
 
-// What both OpenCodes share once they have handed over a source: from `start`, the sessions of
-// `directory` changed since the last sweep are converted, then each session of it as it goes
-// idle, and funes indexes what was written. Every event reaches every project's instance of
-// this plugin; a session of another project is that project's instance's to convert. With a
-// memory bound, what this host has indexed is published at the boundaries OpenCode has: after the
-// sweep, catching up what a shutdown left behind, and at disposal.
+// What both OpenCodes share once they have handed over a source: from `start`, and again after a
+// session goes idle, the sessions changed since the last sweep are converted, then funes indexes
+// what was written. OpenCode 2's source lists every project, so a session whose own instance
+// never ran — a project not open, a hook that did not fire — is caught at the next turn. Every
+// event reaches every instance; converting a session twice is harmless, funes drops a turn it
+// holds. With a memory bound, what this host has indexed is published at the boundaries OpenCode
+// has: after the sweep, catching up what a shutdown left behind, and at disposal.
 function sync(directory: string, source: Source) {
   const pending = new Set<string>();
   const abort = new AbortController();
   let sweep = true;
   let publishing = Boolean(memory);
-  // When the last sweep of this directory to finish had started: the sessions unchanged since
-  // are funes's already. funes drains the spool, so only a mark kept here can say so.
-  const mark = join(here, "swept", createHash("sha1").update(directory).digest("hex"));
+  // When the last sweep to finish had started: the sessions unchanged since are funes's already.
+  // funes drains the spool, so only a mark kept here can say so. One mark for the whole sweep —
+  // OpenCode 2 lists every project, and a mark per directory would import them again from each instance.
+  const mark = join(here, "swept", "all");
   // When the sweep in progress started, until the mark says so.
   let swept = 0;
   // Whether the spool holds turns funes has not been asked to index.
@@ -77,7 +78,7 @@ function sync(directory: string, source: Source) {
       for (const id of [...pending]) {
         if (abort.signal.aborted) return;
         pending.delete(id); // An idle during the conversion re-adds this ID for a fresh snapshot.
-        try { if (await emit(source, id, spool, here, abort.signal, directory)) written = true; }
+        try { if (await emit(source, id, spool, here, abort.signal)) written = true; }
         catch (error) { pending.add(id); failed ??= error; log(`convert ${id}: ${reason(error)}`); }
       }
       if (abort.signal.aborted) return;
@@ -115,6 +116,8 @@ function sync(directory: string, source: Source) {
     idle(id: string) {
       if (abort.signal.aborted) return;
       pending.add(id);
+      // The next drain lists again, so a session this event is not about is caught too.
+      sweep = true;
       wake();
     },
     async dispose() {
@@ -159,7 +162,7 @@ const plugin: PluginModule & { id: string; setup(ctx: Context): Promise<(() => P
     if (!found) return void log("no background service registration names this process, so sessions are not indexed; OpenCode 2 reads them through the service it runs as");
     const headers = found.password ? { authorization: `Basic ${Buffer.from(`opencode:${found.password}`).toString("base64")}` } : undefined;
     const { directory } = ctx.location;
-    const run = sync(directory, sourceV2(found.url, directory, headers));
+    const run = sync(directory, sourceV2(found.url, undefined, headers));
     const abort = new AbortController();
     // Subscribed before the sweep lists: a session that ends while this plugin loads is either
     // listed as changed or seen ending, never lost between the two.

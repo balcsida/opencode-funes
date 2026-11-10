@@ -350,6 +350,7 @@ test("OpenCode 2: setup registers the MCP server, sweeps through the service, fo
   const cleanup = await f.startV2();
   expect(f.mcp.get("funes")).toEqual({ type: "local", command: [f.binary, "mcp", "acme/kb"], environment });
   await until(async () => (await f.lines("imported")).length === 4);
+  expect(f.requests[0].searchParams.has("directory")).toBe(false);
   expect(f.requests.map(r => r.pathname)).toEqual(["/api/session", "/api/session/ses_0", "/api/session/ses_0/message", "/api/session/ses_1", "/api/session/ses_1/message"]);
   expect(f.headers.every(h => h === BASIC_V2)).toBe(true);
   expect((await f.lines("imported")).map(t => [t.session_id, t.turn_uuid, t.seq, t.cwd]).sort()).toEqual([
@@ -359,11 +360,15 @@ test("OpenCode 2: setup registers the MCP server, sweeps through the service, fo
   if (newer[0].type === "user") newer[0].text = "newer snapshot";
   f.setMessages(newer);
   // Every project's instance sees every session end; one of another project is not this one's.
+  // Every project's instance sees every session end, and converts it: a project with no instance
+  // of its own is still indexed, and the idle lists every project again.
   f.rows.push({ ...session, id: "ses_elsewhere", directory: join(f.tmp, "elsewhere") });
   f.idleV2("ses_elsewhere");
   f.idleV2("ses_1");
-  await until(async () => (await f.lines("imported")).length === 6);
-  expect((await f.lines("imported")).slice(4).map(t => [t.session_id, t.blocks[0].text])).toEqual([["ses_1", "newer snapshot"], ["ses_1", "Inspect first"]]);
+  await until(async () => (await f.lines("imported")).length === 8);
+  expect((await f.lines("imported")).slice(4).map(t => [t.session_id, t.blocks[0].text])).toEqual([
+    ["ses_elsewhere", "newer snapshot"], ["ses_elsewhere", "Inspect first"], ["ses_1", "newer snapshot"], ["ses_1", "Inspect first"],
+  ]);
   expect(f.requests.filter(r => r.pathname.includes("ses_elsewhere")).map(r => r.pathname)).toEqual(["/api/session/ses_elsewhere", "/api/session/ses_elsewhere/message"]);
   await cleanup?.();
   f.idleV2("ses_0");
@@ -442,6 +447,19 @@ test("CLI backfill uses Basic auth and writes each session as a turns file", asy
   expect(turns.map(t => [t.session_id, t.turn_uuid, t.seq, t.blocks.length])).toEqual([["ses_0", "msg_001", 0, 1], ["ses_0", "msg_002", 1, 6]]);
   expect(f.requests[0].pathname).toBe("/api/info");
   expect(f.headers.every(h => h === BASIC_V1)).toBe(true);
+});
+
+test("CLI backfill --all lists every OpenCode 2 project", async () => {
+  const f = await fixture(1, { v2: true });
+  const out = join(f.tmp, "out");
+  const child = Bun.spawn([process.execPath, "src/cli.ts", "backfill", "--all", "--url", f.input.serverUrl.toString(), "--out", out], {
+    env: { ...process.env, OPENCODE_SERVER_PASSWORD: "test" }, stdout: "pipe", stderr: "pipe",
+  });
+  const stderr = await new Response(child.stderr).text();
+  expect(stderr).toBe("");
+  expect(await child.exited).toBe(0);
+  expect(f.requests.find(r => r.pathname === "/api/session")?.searchParams.has("directory")).toBe(false);
+  expect(await readdir(out)).toEqual(["ses_0.funes.jsonl"]);
 });
 
 test("CLI backfill tells an OpenCode 2 server by its /api and converts through it", async () => {

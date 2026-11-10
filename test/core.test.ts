@@ -1,5 +1,9 @@
+import { Database } from "bun:sqlite";
 import { expect, test } from "bun:test";
-import { itemsV1, itemsV2, turnsOf, type MessageV2 } from "../opencode/core";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { itemsV1, itemsV2, sourceSqlite, turnsOf, type MessageV2 } from "../opencode/core";
 import { messages, messagesV2, row } from "./fixtures";
 
 const seqs = (turns: ReturnType<typeof turnsOf>) => turns.map(t => [t.turn_uuid, t.seq]);
@@ -164,6 +168,25 @@ test("OpenCode 1 keeps a file part's name and a small text selection", () => {
   expect(turnsOf(row, itemsV1(input))[0].blocks.map(b => b.text)).toEqual([
     "Explain this project", "[attachment] README.md (text/markdown)", "# Title", "[attachment] shot.png (image/png)",
   ]);
+});
+
+test("OpenCode 2's database is read as the turns its API would serve", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "opencode-funes-db-"));
+  try {
+    const db = new Database(join(dir, "opencode.db"));
+    db.run("CREATE TABLE session_v2 (id TEXT, directory TEXT, time_updated INTEGER)");
+    db.run("CREATE TABLE session_message (id TEXT, session_id TEXT, type TEXT, seq INTEGER, data TEXT)");
+    db.run("INSERT INTO session_v2 (id, directory, time_updated) VALUES (?, ?, ?)", ["ses_one", "/work/project", 1000]);
+    db.run("INSERT INTO session_message (id, session_id, type, seq, data) VALUES (?, ?, ?, ?, ?)",
+      ["msg_001", "ses_one", "user", 0, JSON.stringify({ text: "Explain this project", time: { created: 1000 }, files: [] })]);
+    db.run("INSERT INTO session_message (id, session_id, type, seq, data) VALUES (?, ?, ?, ?, ?)",
+      ["msg_sum", "ses_one", "compaction", 1, JSON.stringify({ status: "completed", reason: "auto", summary: "Kept the plan.", time: { created: 1500 } })]);
+    db.close();
+    const source = await sourceSqlite(join(dir, "opencode.db"));
+    const { session, messages: stored } = await source.read("ses_one");
+    expect(await source.list()).toEqual([session]);
+    expect(turnsOf(session, stored).map(t => t.blocks[0].text)).toEqual(["Explain this project", "[compaction auto]\nKept the plan."]);
+  } finally { await rm(dir, { recursive: true, force: true }); }
 });
 
 test("a tool call recorded without its input or output still makes two blocks funes can read", () => {

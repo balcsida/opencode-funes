@@ -204,7 +204,8 @@ export function sourceV1(client: OpencodeClient, directory: string): Source {
 }
 
 // OpenCode 2, through its HTTP API: cursor-paged listings under /api, read whole.
-export function sourceV2(url: string | URL, directory: string, headers?: HeadersInit): Source {
+// Without `directory` the listing is every project the server has.
+export function sourceV2(url: string | URL, directory?: string, headers?: HeadersInit): Source {
   async function get<T>(path: string, params: Record<string, string>, signal?: AbortSignal): Promise<T> {
     const target = new URL(path, url);
     for (const [key, value] of Object.entries(params)) target.searchParams.set(key, value);
@@ -226,11 +227,35 @@ export function sourceV2(url: string | URL, directory: string, headers?: Headers
   }
   const row = (s: SessionV2): Row => ({ id: s.id, directory: s.location.directory, updated: s.time.updated });
   return {
-    list: signal => pages<SessionV2>("/api/session", { directory }, signal).then(rows => rows.map(row)),
+    list: signal => pages<SessionV2>("/api/session", directory ? { directory } : {}, signal).then(rows => rows.map(row)),
     async read(id, signal) {
       const session = await get<{ data: SessionV2 }>(`/api/session/${id}`, {}, signal);
       const messages = await pages<MessageV2>(`/api/session/${id}/message`, { order: "asc" }, signal);
       return { session: row(session.data), messages: itemsV2(messages) };
+    },
+  };
+}
+
+// OpenCode 2's database, for an import while no server is running. The HTTP API is what stays
+// stable; these are the same rows it serves (`session_v2`, `session_message`), read once. The id
+// and type live in the columns, not always in the JSON.
+export async function sourceSqlite(file: string): Promise<Source> {
+  const { Database } = await import("bun:sqlite");
+  const db = new Database(file, { readonly: true });
+  const listStmt = db.query("SELECT id, directory, time_updated AS updated FROM session_v2");
+  const oneStmt = db.query("SELECT id, directory, time_updated AS updated FROM session_v2 WHERE id = ?");
+  const msgStmt = db.query("SELECT id, type, data FROM session_message WHERE session_id = ? ORDER BY seq ASC");
+  const rowOf = (row: { id: string; directory: string | null; updated: number }): Row => ({ id: row.id, directory: row.directory ?? "", updated: row.updated });
+  return {
+    async list() { return (listStmt.all() as Array<{ id: string; directory: string | null; updated: number }>).map(rowOf); },
+    async read(id) {
+      const session = oneStmt.get(id) as { id: string; directory: string | null; updated: number } | null;
+      if (!session) throw new Error(`OpenCode session ${id} is not in ${file}`);
+      const messages = (msgStmt.all(id) as Array<{ id: string; type: string; data: string }>).map(row => {
+        const data = JSON.parse(row.data) as Record<string, unknown>;
+        return { ...data, id: row.id, type: row.type } as MessageV2;
+      });
+      return { session: rowOf(session), messages: itemsV2(messages) };
     },
   };
 }
